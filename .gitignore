@@ -1,15 +1,9 @@
 # Binaries
-/opsagent-ai
-cli/opsagent-ai
+/opsagent
 *.exe
 
-# Python
-ai-agent/.venv/
-ai-agent/venv/
-__pycache__/
-*.py[cod]
+# Env
 .env
-!.env.example
 
 # IDE
 .idea/
