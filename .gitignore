@@ -1,5 +1,5 @@
 # Binaries
-/opsagent
+# /opsagentk
 *.exe
 
 # Env
