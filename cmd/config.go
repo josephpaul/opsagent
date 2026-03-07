@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/josephpaul/opsagent-ai/internal/config"
+	"github.com/josephpaul/opsagent/internal/config"
 	"github.com/spf13/cobra"
 )
 

@@ -1,4 +1,4 @@
-module github.com/josephpaul/opsagent-ai
+module github.com/josephpaul/opsagent
 
 go 1.24.4
 

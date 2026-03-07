@@ -2,8 +2,8 @@
 package main
 
 import (
-	"github.com/josephpaul/opsagent-ai/cmd"
-	"github.com/josephpaul/opsagent-ai/internal/config"
+	"github.com/josephpaul/opsagent/cmd"
+	"github.com/josephpaul/opsagent/internal/config"
 )
 
 func main() {

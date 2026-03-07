@@ -138,6 +138,47 @@ opsagent config unset KEY     # Remove a saved key
 
 All of these can be set from the CLI, so you never need a `.env` file.
 
+## Background Monitoring
+
+OpsAgent can run as a background service that continuously monitors CPU and RAM usage. When thresholds are breached, it automatically invokes the AI agent to diagnose the cause.
+
+### Run in foreground
+
+```bash
+opsagent monitor run --interval 30s --cpu-threshold 90 --ram-threshold 85
+opsagent monitor run --interval 5m --log /var/log/opsagent/monitor.log
+```
+
+Press Ctrl+C to stop.
+
+### Install as a background service
+
+```bash
+opsagent monitor install --interval 60s --cpu-threshold 90 --ram-threshold 85
+```
+
+This creates a **systemd** user service on Linux or a **launchd** agent on macOS that starts automatically on login.
+
+### Manage the service
+
+```bash
+opsagent monitor status      # Check if running
+opsagent monitor stop        # Stop the service
+opsagent monitor start       # Start the service
+opsagent monitor uninstall   # Remove the service entirely
+```
+
+### Monitor flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--interval` | `60s` | How often to poll (e.g. `30s`, `5m`, `1h`) |
+| `--cpu-threshold` | `90` | CPU % that triggers an AI diagnosis |
+| `--ram-threshold` | `85` | RAM % that triggers an AI diagnosis |
+| `--log` | *(stdout only)* | Also write logs to this file |
+
+The installer (`install.sh`) also offers to set up monitoring during installation.
+
 ## License
 
 Open source. Use and modify as needed.
