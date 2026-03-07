@@ -273,6 +273,29 @@ Once the bot is running, send messages in Telegram:
 | `/status` | Confirms the bot is running |
 | Any text | Runs an AI-powered server diagnosis and replies |
 
+### Install as a background service
+
+Run the Telegram bot as a persistent service that auto-starts on boot:
+
+```bash
+# Webhook mode (production)
+opsagent telegram install --mode webhook --webhook-url https://your-server.com
+
+# Polling mode (simpler)
+opsagent telegram install --mode poll
+```
+
+Manage the service:
+
+```bash
+opsagent telegram status      # Check if running
+opsagent telegram stop        # Stop the service
+opsagent telegram start       # Start the service
+opsagent telegram uninstall   # Remove the service entirely
+```
+
+This creates a **systemd** user service on Linux or a **launchd** agent on macOS.
+
 ### Restricting access
 
 Use `--chat-id` to only respond to messages from your chat. To find your chat ID, start the bot in poll mode without `--chat-id` and send it a message — the logs will show `query from chat <ID>`.
