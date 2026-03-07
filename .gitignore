@@ -1,0 +1,22 @@
+# Binaries
+/opsagent-ai
+cli/opsagent-ai
+*.exe
+
+# Python
+ai-agent/.venv/
+ai-agent/venv/
+__pycache__/
+*.py[cod]
+.env
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
