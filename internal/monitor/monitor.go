@@ -12,15 +12,18 @@ import (
 	"time"
 
 	"github.com/josephpaul/opsagent/internal/diagnostics"
+	"github.com/josephpaul/opsagent/internal/telegram"
 )
 
 // Config holds the settings for a monitoring run.
 type Config struct {
-	Interval     time.Duration
-	CPUThreshold int
-	RAMThreshold int
-	LogPath      string
-	Diagnose     func(ctx context.Context, query string) (string, error)
+	Interval       time.Duration
+	CPUThreshold   int
+	RAMThreshold   int
+	LogPath        string
+	Diagnose       func(ctx context.Context, query string) (string, error)
+	TelegramToken  string
+	TelegramChatID int64
 }
 
 // Run starts the monitoring loop. It blocks until the context is cancelled or
@@ -45,8 +48,17 @@ func Run(ctx context.Context, cfg Config) error {
 		fmt.Fprintf(logWriter, "[%s] %s\n", time.Now().Format("2006-01-02 15:04:05"), msg)
 	}
 
-	log("monitor started (interval=%s cpu_threshold=%d%% ram_threshold=%d%%)",
-		cfg.Interval, cfg.CPUThreshold, cfg.RAMThreshold)
+	tgEnabled := cfg.TelegramToken != "" && cfg.TelegramChatID != 0
+	notify := func(msg string) {
+		if tgEnabled {
+			if err := telegram.Notify(cfg.TelegramToken, cfg.TelegramChatID, msg); err != nil {
+				log("telegram notify error: %v", err)
+			}
+		}
+	}
+
+	log("monitor started (interval=%s cpu_threshold=%d%% ram_threshold=%d%% telegram=%v)",
+		cfg.Interval, cfg.CPUThreshold, cfg.RAMThreshold, tgEnabled)
 
 	ticker := time.NewTicker(cfg.Interval)
 	defer ticker.Stop()
@@ -92,6 +104,7 @@ func Run(ctx context.Context, cfg Config) error {
 			reason = fmt.Sprintf("ALERT: RAM at %d%% (threshold %d%%)", ramUsage, cfg.RAMThreshold)
 		}
 		log("%s", reason)
+		notify(reason)
 
 		if cfg.Diagnose != nil {
 			query := fmt.Sprintf("CPU is at %d%% and RAM is at %d%%. Top process is %s. Diagnose why the server is under heavy load.",
@@ -102,6 +115,7 @@ func Run(ctx context.Context, cfg Config) error {
 				log("diagnosis error: %v", err)
 			} else {
 				log("--- AI Diagnosis ---\n%s", diagnosis)
+				notify("AI Diagnosis:\n" + diagnosis)
 			}
 		}
 	}

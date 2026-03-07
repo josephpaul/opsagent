@@ -11,15 +11,22 @@ OpsAgent-AI is one Go application using [Google ADK for Go](https://github.com/g
 - **Diagnostic tools** – Four in-process tools that gather CPU, memory, disk, and process data using OS-native commands (Linux, macOS, and Windows).
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  opsagent (single binary)                             │
-│  ┌─────────┐    ┌─────────────┐    ┌─────────────────┐  │
-│  │  CLI    │───►│  ADK Agent  │───►│ check_cpu       │  │
-│  │ (Cobra) │    │  (LLM)      │    │ check_memory    │  │
-│  │         │◄───│             │◄───│ check_disk      │  │
-│  └─────────┘    └─────────────┘    │ check_processes  │  │
-│                                    └─────────────────┘  │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  opsagent (single binary)                                    │
+│                                                              │
+│  ┌──────────┐   ┌─────────────┐   ┌─────────────────┐       │
+│  │  CLI     │──►│  ADK Agent  │──►│ check_cpu       │       │
+│  │ (Cobra)  │   │  (LLM)      │   │ check_memory    │       │
+│  │          │◄──│             │◄──│ check_disk      │       │
+│  └──────────┘   └──────┬──────┘   │ check_processes │       │
+│  ┌──────────┐          │          └─────────────────┘       │
+│  │ Telegram │◄─────────┘                                    │
+│  │  Bot     │  (webhook / poll)                             │
+│  └──────────┘                                               │
+│  ┌──────────┐                                               │
+│  │ Monitor  │──► threshold alerts ──► Telegram / logs       │
+│  └──────────┘                                               │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 Diagnostics run on the machine where you execute the binary. No separate server or Python process.
@@ -135,6 +142,9 @@ opsagent config unset KEY     # Remove a saved key
 | `OPENAI_BASE_URL` | OpenAI-compatible APIs |
 | `OPSAGENT_PROVIDER` | Default provider |
 | `OPSAGENT_MODEL` | Default model |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot |
+| `TELEGRAM_CHAT_ID` | Telegram bot |
+| `TELEGRAM_WEBHOOK_SECRET` | Telegram webhook verification |
 
 All of these can be set from the CLI, so you never need a `.env` file.
 
@@ -178,6 +188,103 @@ opsagent monitor uninstall   # Remove the service entirely
 | `--log` | *(stdout only)* | Also write logs to this file |
 
 The installer (`install.sh`) also offers to set up monitoring during installation.
+
+### Telegram alerts for the monitor
+
+Send threshold alerts and AI diagnoses to Telegram:
+
+```bash
+opsagent monitor run --telegram-token <BOT_TOKEN> --telegram-chat-id <CHAT_ID>
+```
+
+Or save the tokens so every monitor run uses them:
+
+```bash
+opsagent config set-key TELEGRAM_BOT_TOKEN <token>
+opsagent config set-key TELEGRAM_CHAT_ID <chat_id>
+```
+
+## Telegram Bot
+
+Run OpsAgent as a Telegram bot so you can send diagnostic queries from your phone or any Telegram client.
+
+### Setup
+
+1. Open Telegram and message [@BotFather](https://t.me/BotFather)
+2. Send `/newbot`, follow the prompts, and copy the **bot token**
+3. Save the token:
+   ```bash
+   opsagent config set-key TELEGRAM_BOT_TOKEN <token>
+   ```
+
+### Webhook mode (recommended for production)
+
+Telegram pushes messages to your server — low latency, no polling overhead. Requires a public URL (use a reverse proxy like nginx or Cloudflare Tunnel).
+
+```bash
+opsagent telegram webhook --token <BOT_TOKEN> --webhook-url https://your-server.com
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--token` | env `TELEGRAM_BOT_TOKEN` | Bot token from BotFather |
+| `--webhook-url` | *(required)* | Public HTTPS URL for your server |
+| `--port` | `8443` | Local port for the HTTP listener |
+| `--chat-id` | `0` (all) | Restrict to a specific chat ID |
+| `--webhook-secret` | env `TELEGRAM_WEBHOOK_SECRET` | Secret for verifying requests are from Telegram (auto-generated if empty) |
+
+The webhook endpoint is `POST /webhook/telegram` on the configured port. Every incoming request is verified using the `X-Telegram-Bot-Api-Secret-Token` header. You can set a persistent secret via config:
+
+```bash
+opsagent config set-key TELEGRAM_WEBHOOK_SECRET my-secret-value
+```
+
+If not set, a random secret is generated on each startup.
+
+### Polling mode (simpler, no public IP needed)
+
+OpsAgent fetches messages from Telegram using long polling. Great for development or servers behind NAT.
+
+```bash
+opsagent telegram poll --token <BOT_TOKEN>
+```
+
+### Bot commands
+
+Once the bot is running, send messages in Telegram:
+
+| Message | What it does |
+|---|---|
+| `/start` | Welcome message with usage hints |
+| `/status` | Confirms the bot is running |
+| Any text | Runs an AI-powered server diagnosis and replies |
+
+### Restricting access
+
+Use `--chat-id` to only respond to messages from your chat. To find your chat ID, start the bot in poll mode without `--chat-id` and send it a message — the logs will show `query from chat <ID>`.
+
+## Updating
+
+### Self-update
+
+```bash
+opsagent update          # Download and install the latest release
+opsagent update --check  # Check for updates without installing
+```
+
+The update command checks GitHub Releases for a pre-built binary matching your OS and architecture. If no binary is available, it falls back to cloning the repo and building from source (requires Go).
+
+### Manual update
+
+```bash
+curl -sSL https://raw.githubusercontent.com/josephpaul/opsagent/main/install.sh | bash
+```
+
+Or pull and rebuild:
+
+```bash
+cd opsagent && git pull && go build -o opsagent . && sudo cp opsagent /usr/local/bin/
+```
 
 ## License
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,8 @@ var (
 	monitorCPUThreshold int
 	monitorRAMThreshold int
 	monitorLogPath      string
+	monitorTGToken      string
+	monitorTGChatID     int64
 )
 
 var monitorCmd = &cobra.Command{
@@ -79,11 +82,15 @@ func init() {
 	monitorRunCmd.Flags().IntVar(&monitorCPUThreshold, "cpu-threshold", 90, "CPU usage percentage to trigger alert")
 	monitorRunCmd.Flags().IntVar(&monitorRAMThreshold, "ram-threshold", 85, "RAM usage percentage to trigger alert")
 	monitorRunCmd.Flags().StringVar(&monitorLogPath, "log", "", "Log file path (also prints to stdout)")
+	monitorRunCmd.Flags().StringVar(&monitorTGToken, "telegram-token", "", "Telegram bot token for alert notifications")
+	monitorRunCmd.Flags().Int64Var(&monitorTGChatID, "telegram-chat-id", 0, "Telegram chat ID for alert notifications")
 
 	monitorInstallCmd.Flags().StringVar(&monitorInterval, "interval", "60s", "Polling interval")
 	monitorInstallCmd.Flags().IntVar(&monitorCPUThreshold, "cpu-threshold", 90, "CPU threshold (%)")
 	monitorInstallCmd.Flags().IntVar(&monitorRAMThreshold, "ram-threshold", 85, "RAM threshold (%)")
 	monitorInstallCmd.Flags().StringVar(&monitorLogPath, "log", "", "Log file path")
+	monitorInstallCmd.Flags().StringVar(&monitorTGToken, "telegram-token", "", "Telegram bot token for alert notifications")
+	monitorInstallCmd.Flags().Int64Var(&monitorTGChatID, "telegram-chat-id", 0, "Telegram chat ID for alert notifications")
 
 	monitorCmd.AddCommand(monitorRunCmd)
 	monitorCmd.AddCommand(monitorInstallCmd)
@@ -106,11 +113,15 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no API key configured for provider %q. Run 'opsagent config set' first", effective)
 	}
 
+	tgToken, tgChat := resolveMonitorTelegram()
+
 	cfg := monitor.Config{
-		Interval:     interval,
-		CPUThreshold: monitorCPUThreshold,
-		RAMThreshold: monitorRAMThreshold,
-		LogPath:      monitorLogPath,
+		Interval:       interval,
+		CPUThreshold:   monitorCPUThreshold,
+		RAMThreshold:   monitorRAMThreshold,
+		LogPath:        monitorLogPath,
+		TelegramToken:  tgToken,
+		TelegramChatID: tgChat,
 		Diagnose: func(ctx context.Context, query string) (string, error) {
 			return diagnoseQuery(ctx, effective, modelName, query)
 		},
@@ -187,6 +198,22 @@ func runMonitorStatus(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 	return nil
+}
+
+func resolveMonitorTelegram() (string, int64) {
+	token := monitorTGToken
+	if token == "" {
+		token = os.Getenv("TELEGRAM_BOT_TOKEN")
+	}
+	chatID := monitorTGChatID
+	if chatID == 0 {
+		if env := os.Getenv("TELEGRAM_CHAT_ID"); env != "" {
+			if v, err := strconv.ParseInt(env, 10, 64); err == nil {
+				chatID = v
+			}
+		}
+	}
+	return token, chatID
 }
 
 func diagnoseQuery(ctx context.Context, providerName, modelName, query string) (string, error) {
