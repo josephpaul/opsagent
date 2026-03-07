@@ -33,37 +33,51 @@ Diagnostics run on the machine where you execute the binary. No separate server 
 
 ## Requirements
 
-- **Go** 1.21+ (to build)
 - **API key** for your chosen provider
 - **Linux, macOS, or Windows**
   - Linux: uses `top`, `free`, `df`, `ps`
   - macOS: uses `top`, `vm_stat`, `df`, `ps`
   - Windows: uses PowerShell (`Get-CimInstance`, `Get-Process`)
 
+No Go installation required — pre-built binaries are available for all platforms.
+
 ## Installation
 
-### Quick install
+### Quick install (recommended)
 
-From GitHub:
+Downloads a pre-built binary — no Go or build tools needed:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/josephpaul/opsagent/main/install.sh | bash
 ```
 
-Or clone and run from project root:
+The script auto-detects your OS and architecture, downloads the right binary from GitHub Releases, and installs it to `/usr/local/bin`. If no pre-built binary is available, it falls back to building from source (requires Go).
+
+### Download manually
+
+Grab a binary from the [Releases page](https://github.com/josephpaul/opsagent/releases):
+
+| Platform | Binary |
+|---|---|
+| Linux (x86_64) | `opsagent-linux-amd64` |
+| Linux (ARM64) | `opsagent-linux-arm64` |
+| macOS (Intel) | `opsagent-darwin-amd64` |
+| macOS (Apple Silicon) | `opsagent-darwin-arm64` |
+| Windows (x86_64) | `opsagent-windows-amd64.exe` |
 
 ```bash
-git clone https://github.com/josephpaul/opsagent.git && cd opsagent && ./install.sh
+chmod +x opsagent-*
+sudo mv opsagent-* /usr/local/bin/opsagent
 ```
 
-The script builds the binary and copies it to `/usr/local/bin`. Then run `opsagent config set` to save your API key.
+### Build from source
 
-### Manual build
+Requires Go 1.21+:
 
 ```bash
-cd opsagent
+git clone https://github.com/josephpaul/opsagent.git && cd opsagent
 go build -o opsagent .
-sudo cp opsagent /usr/local/bin/   # Linux/macOS (optional)
+sudo cp opsagent /usr/local/bin/
 ```
 
 On Windows (PowerShell):
