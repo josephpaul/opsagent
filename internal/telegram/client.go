@@ -107,8 +107,14 @@ func (c *Client) SendMessage(chatID int64, text string) error {
 }
 
 // SetWebhook registers a webhook URL with Telegram.
-func (c *Client) SetWebhook(url string) error {
-	body, _ := json.Marshal(map[string]string{"url": url})
+// If secretToken is non-empty, Telegram will include it in every webhook
+// request as the X-Telegram-Bot-Api-Secret-Token header for verification.
+func (c *Client) SetWebhook(url, secretToken string) error {
+	payload := map[string]string{"url": url}
+	if secretToken != "" {
+		payload["secret_token"] = secretToken
+	}
+	body, _ := json.Marshal(payload)
 	resp, err := c.HTTP.Post(c.BaseURL+"/setWebhook", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("setWebhook: %w", err)

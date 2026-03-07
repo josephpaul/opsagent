@@ -11,10 +11,11 @@ import (
 )
 
 var (
-	tgToken       string
-	tgChatID      int64
-	tgPort        int
-	tgWebhookURL  string
+	tgToken         string
+	tgChatID        int64
+	tgPort          int
+	tgWebhookURL    string
+	tgWebhookSecret string
 )
 
 var telegramCmd = &cobra.Command{
@@ -59,6 +60,7 @@ func init() {
 
 	telegramWebhookCmd.Flags().IntVar(&tgPort, "port", 8443, "Port for the webhook HTTP server")
 	telegramWebhookCmd.Flags().StringVar(&tgWebhookURL, "webhook-url", "", "Public URL where Telegram sends updates (required)")
+	telegramWebhookCmd.Flags().StringVar(&tgWebhookSecret, "webhook-secret", "", "Secret token for webhook verification (or set TELEGRAM_WEBHOOK_SECRET; auto-generated if empty)")
 
 	telegramCmd.AddCommand(telegramWebhookCmd)
 	telegramCmd.AddCommand(telegramPollCmd)
@@ -102,13 +104,19 @@ func runTelegramWebhook(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no API key configured for provider %q. Run 'opsagent config set' first", effective)
 	}
 
+	webhookSecret := tgWebhookSecret
+	if webhookSecret == "" {
+		webhookSecret = os.Getenv("TELEGRAM_WEBHOOK_SECRET")
+	}
+
 	client := telegram.NewClient(token)
 
 	return telegram.RunWebhook(context.Background(), telegram.WebhookConfig{
-		Client:      client,
-		Port:        tgPort,
-		WebhookURL:  tgWebhookURL,
-		AllowedChat: chatID,
+		Client:        client,
+		Port:          tgPort,
+		WebhookURL:    tgWebhookURL,
+		WebhookSecret: webhookSecret,
+		AllowedChat:   chatID,
 		Diagnose: func(ctx context.Context, query string) (string, error) {
 			return diagnoseQuery(ctx, effective, modelName, query)
 		},

@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -18,11 +20,12 @@ type DiagnoseFunc func(ctx context.Context, query string) (string, error)
 
 // WebhookConfig holds the settings for the webhook server.
 type WebhookConfig struct {
-	Client      *Client
-	Port        int
-	WebhookURL  string
-	AllowedChat int64 // 0 = allow all chats
-	Diagnose    DiagnoseFunc
+	Client        *Client
+	Port          int
+	WebhookURL    string
+	WebhookSecret string // if empty, a random token is generated per startup
+	AllowedChat   int64  // 0 = allow all chats
+	Diagnose      DiagnoseFunc
 }
 
 // RunWebhook starts an HTTP server that receives Telegram webhook pushes.
@@ -32,13 +35,23 @@ func RunWebhook(ctx context.Context, cfg WebhookConfig) error {
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	secretToken := cfg.WebhookSecret
+	if secretToken == "" {
+		var err error
+		secretToken, err = generateSecretToken()
+		if err != nil {
+			return fmt.Errorf("generate secret token: %w", err)
+		}
+		log.Println("[telegram] using auto-generated webhook secret (set TELEGRAM_WEBHOOK_SECRET for a persistent one)")
+	}
+
 	path := "/webhook/telegram"
 	fullURL := strings.TrimRight(cfg.WebhookURL, "/") + path
 
-	if err := cfg.Client.SetWebhook(fullURL); err != nil {
+	if err := cfg.Client.SetWebhook(fullURL, secretToken); err != nil {
 		return fmt.Errorf("register webhook: %w", err)
 	}
-	log.Printf("[telegram] webhook registered: %s", fullURL)
+	log.Printf("[telegram] webhook registered: %s (with secret token verification)", fullURL)
 
 	handler := &messageHandler{
 		client:      cfg.Client,
@@ -50,6 +63,12 @@ func RunWebhook(ctx context.Context, cfg WebhookConfig) error {
 	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if r.Header.Get("X-Telegram-Bot-Api-Secret-Token") != secretToken {
+			log.Printf("[telegram] rejected request: invalid secret token from %s", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -170,6 +189,16 @@ func (h *messageHandler) handle(ctx context.Context, update Update) {
 
 	log.Printf("[telegram] diagnosis sent to chat %d", chatID)
 	h.client.SendMessage(chatID, diagnosis)
+}
+
+// generateSecretToken creates a cryptographically random 32-byte hex string.
+// Telegram accepts 1-256 character tokens containing A-Za-z0-9_-.
+func generateSecretToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // Notify sends a one-off message to a chat (used by the monitor for alerts).
