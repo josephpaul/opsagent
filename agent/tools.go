@@ -3,7 +3,7 @@ package agent
 import (
 	"fmt"
 
-	"github.com/josephpaul/opsagent-ai/internal/diagnostics"
+	"github.com/josephpaul/opsagent/internal/diagnostics"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 )

@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/josephpaul/opsagent-ai/agent"
+	"github.com/josephpaul/opsagent/agent"
 	"github.com/spf13/cobra"
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"

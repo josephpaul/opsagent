@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/josephpaul/opsagent-ai/internal/llmadapter/anthropic"
-	"github.com/josephpaul/opsagent-ai/internal/llmadapter/openai"
+	"github.com/josephpaul/opsagent/internal/llmadapter/anthropic"
+	"github.com/josephpaul/opsagent/internal/llmadapter/openai"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/model"
