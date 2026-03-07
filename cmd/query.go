@@ -14,35 +14,52 @@ import (
 	"google.golang.org/genai"
 )
 
-// effectiveProvider returns the provider whose API key is set. If the requested provider
-// has a key, use it; otherwise use the first provider that has a key set (gemini, openai, anthropic).
+func hasProviderKey(p string) bool {
+	switch p {
+	case "gemini":
+		return os.Getenv("GOOGLE_API_KEY") != ""
+	case "openai":
+		return os.Getenv("OPENAI_API_KEY") != ""
+	case "anthropic":
+		return os.Getenv("ANTHROPIC_API_KEY") != ""
+	}
+	return false
+}
+
+// effectiveProvider returns the best provider choice based on the explicit flag,
+// configured default provider, and whichever API keys are available.
 func effectiveProvider(requested string) string {
 	requested = strings.ToLower(strings.TrimSpace(requested))
-	hasKey := func(p string) bool {
-		switch p {
-		case "gemini":
-			return os.Getenv("GOOGLE_API_KEY") != ""
-		case "openai":
-			return os.Getenv("OPENAI_API_KEY") != ""
-		case "anthropic":
-			return os.Getenv("ANTHROPIC_API_KEY") != ""
-		}
-		return false
-	}
-	if hasKey(requested) {
+	if hasProviderKey(requested) {
 		return requested
 	}
+
+	preferred := strings.ToLower(strings.TrimSpace(os.Getenv("OPSAGENT_PROVIDER")))
+	if requested == "" && hasProviderKey(preferred) {
+		return preferred
+	}
+
 	for _, p := range []string{"gemini", "openai", "anthropic"} {
-		if hasKey(p) {
+		if hasProviderKey(p) {
 			return p
 		}
 	}
-	return requested
+
+	if requested != "" {
+		return requested
+	}
+	if preferred != "" {
+		return preferred
+	}
+	return "gemini"
 }
 
 func defaultModel(provider, modelFlag string) string {
 	if modelFlag != "" {
 		return modelFlag
+	}
+	if configured := strings.TrimSpace(os.Getenv("OPSAGENT_MODEL")); configured != "" {
+		return configured
 	}
 	switch strings.ToLower(provider) {
 	case "openai":
@@ -60,6 +77,10 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	effective := effectiveProvider(provider)
 	modelName := defaultModel(effective, model)
 
+	if !hasProviderKey(effective) {
+		return fmt.Errorf("no API key configured for provider %q. Run 'opsagent config set' or 'opsagent config set-key' first", effective)
+	}
+
 	a, err := agent.NewAgent(ctx, effective, modelName)
 	if err != nil {
 		return fmt.Errorf("create agent: %w", err)
@@ -67,7 +88,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 
 	sessionService := session.InMemoryService()
 	sess, err := sessionService.Create(ctx, &session.CreateRequest{
-		AppName: "opsagent-ai",
+		AppName: "opsagent",
 		UserID:  "cli",
 	})
 	if err != nil {
@@ -75,7 +96,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	}
 
 	r, err := runner.New(runner.Config{
-		AppName:        "opsagent-ai",
+		AppName:        "opsagent",
 		Agent:          a,
 		SessionService: sessionService,
 	})

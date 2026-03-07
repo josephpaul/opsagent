@@ -1,10 +1,9 @@
 # Binaries
-/opsagent-ai
+/opsagent
 *.exe
 
 # Env
 .env
-!.env.example
 
 # IDE
 .idea/

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# install.sh - Build and install opsagent-ai (single Go binary).
-# Usage: curl -sSL https://raw.githubusercontent.com/josephpaul/opsagent-ai/main/install.sh | bash
+# install.sh - Build and install opsagent (single Go binary).
+# Usage: curl -sSL https://raw.githubusercontent.com/josephpaul/opsagent/main/install.sh | bash
 # Or: ./install.sh
 
 set -e
@@ -11,30 +11,36 @@ cd "$SCRIPT_DIR"
 echo "==> OpsAgent-AI Installer"
 echo ""
 
-echo "==> Building opsagent-ai (Go)..."
+# --- Build ---
+echo "==> Building opsagent (Go)..."
 if ! command -v go &>/dev/null; then
   echo "Error: Go is not installed. Please install Go and try again."
   exit 1
 fi
-go build -o opsagent-ai .
-echo "    Build complete: ./opsagent-ai"
+go build -o opsagent .
+echo "    Build complete: ./opsagent"
 echo ""
 
+# --- Install binary ---
 echo "==> Installing to /usr/local/bin..."
 if [[ -w /usr/local/bin ]]; then
-  cp opsagent-ai /usr/local/bin/opsagent-ai
-  echo "    Installed: /usr/local/bin/opsagent-ai"
+  cp opsagent /usr/local/bin/opsagent
+  echo "    Installed: /usr/local/bin/opsagent"
 else
   echo "    Skipping (no write permission to /usr/local/bin). Copy manually:"
-  echo "    sudo cp $SCRIPT_DIR/opsagent-ai /usr/local/bin/"
+  echo "    sudo cp $SCRIPT_DIR/opsagent /usr/local/bin/"
 fi
+echo ""
 
 echo ""
-echo "==> Installation complete."
+echo "==> Installation complete!"
 echo ""
-echo "Set your Gemini API key, then run:"
-echo "  export GOOGLE_API_KEY=your_key"
-echo "  opsagent-ai \"why is my server slow\""
-echo "  opsagent-ai \"check cpu\""
-echo "  opsagent-ai \"check disk usage\""
+echo "Quick start:"
+echo "  1. Configure your API key:"
+echo "     opsagent config set"
+echo ""
+echo "  2. Run from anywhere:"
+echo "     opsagent \"why is my server slow\""
+echo "     opsagent \"check cpu\""
+echo "     opsagent \"check disk usage\""
 echo ""

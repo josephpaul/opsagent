@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -17,6 +18,10 @@ func runCommand(name string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+func powershell(script string) (string, error) {
+	return runCommand("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+}
+
 func firstLines(s string, n int) string {
 	lines := strings.Split(s, "\n")
 	if len(lines) <= n {
@@ -25,63 +30,221 @@ func firstLines(s string, n int) string {
 	return strings.Join(lines[:n], "\n")
 }
 
-// CPU runs top and returns usage, top process, and raw sample.
+// CPU returns usage percentage, top process name, and a raw sample.
 func CPU() (cpuUsage int, topProcess string, raw string, err error) {
-	var out string
-	if runtime.GOOS == "darwin" {
-		out, err = runCommand("top", "-l", "1")
-	} else {
-		out, err = runCommand("top", "-bn1")
+	switch runtime.GOOS {
+	case "windows":
+		return cpuWindows()
+	case "darwin":
+		return cpuDarwin()
+	default:
+		return cpuLinux()
 	}
+}
+
+func cpuDarwin() (int, string, string, error) {
+	out, err := runCommand("top", "-l", "1")
 	if err != nil {
 		return 0, "", "", err
 	}
-	cpuUsage, topProcess = parseTopOutput(out, runtime.GOOS)
-	return cpuUsage, topProcess, firstLines(out, 20), nil
+	usage, top := parseTopOutput(out, "darwin")
+	return usage, top, firstLines(out, 20), nil
+}
+
+func cpuLinux() (int, string, string, error) {
+	out, err := runCommand("top", "-bn1")
+	if err != nil {
+		return 0, "", "", err
+	}
+	usage, top := parseTopOutput(out, "linux")
+	return usage, top, firstLines(out, 20), nil
+}
+
+func cpuWindows() (int, string, string, error) {
+	// Get overall CPU load
+	loadOut, err := powershell(`(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average`)
+	if err != nil {
+		return 0, "", "", err
+	}
+	var cpuUsage int
+	fmt.Sscanf(strings.TrimSpace(loadOut), "%d", &cpuUsage)
+
+	// Get top CPU process
+	procOut, err := powershell(`Get-Process | Sort-Object CPU -Descending | Select-Object -First 1 -ExpandProperty ProcessName`)
+	if err != nil {
+		return cpuUsage, "unknown", loadOut, nil
+	}
+	topProcess := strings.TrimSpace(procOut)
+	if topProcess == "" {
+		topProcess = "unknown"
+	}
+	return cpuUsage, topProcess, loadOut, nil
 }
 
 // Memory returns memory stats (total_mb, used_mb, free_mb, usage_percent, etc.).
 func Memory() (map[string]interface{}, error) {
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "windows":
+		return memoryWindows()
+	case "darwin":
 		out, err := runCommand("vm_stat")
 		if err != nil {
 			return nil, err
 		}
 		return parseVMStatOutput(out), nil
+	default:
+		out, err := runCommand("free", "-m")
+		if err != nil {
+			return nil, err
+		}
+		return parseFreeOutput(out), nil
 	}
-	out, err := runCommand("free", "-m")
-	if err != nil {
-		return nil, err
-	}
-	return parseFreeOutput(out), nil
 }
 
-// Disk returns disk usage per filesystem.
-func Disk() (map[string]interface{}, error) {
-	out, err := runCommand("df", "-h")
+func memoryWindows() (map[string]interface{}, error) {
+	out, err := powershell(`
+$os = Get-CimInstance Win32_OperatingSystem
+$total = [math]::Round($os.TotalVisibleMemorySize / 1024)
+$free = [math]::Round($os.FreePhysicalMemory / 1024)
+$used = $total - $free
+$pct = [math]::Round(($used / $total) * 100)
+"$total $used $free $pct"
+`)
 	if err != nil {
 		return nil, err
 	}
-	return parseDfOutput(out), nil
+	fields := strings.Fields(strings.TrimSpace(out))
+	result := map[string]interface{}{"raw": out}
+	if len(fields) >= 4 {
+		total, _ := strconv.Atoi(fields[0])
+		used, _ := strconv.Atoi(fields[1])
+		free, _ := strconv.Atoi(fields[2])
+		pct, _ := strconv.Atoi(fields[3])
+		result["total_mb"] = total
+		result["used_mb"] = used
+		result["free_mb"] = free
+		result["available_mb"] = free
+		result["usage_percent"] = pct
+	}
+	return result, nil
+}
+
+// Disk returns disk usage per filesystem / drive.
+func Disk() (map[string]interface{}, error) {
+	switch runtime.GOOS {
+	case "windows":
+		return diskWindows()
+	default:
+		out, err := runCommand("df", "-h")
+		if err != nil {
+			return nil, err
+		}
+		return parseDfOutput(out), nil
+	}
+}
+
+func diskWindows() (map[string]interface{}, error) {
+	out, err := powershell(`
+Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+  $size = [math]::Round($_.Size / 1GB, 1)
+  $free = [math]::Round($_.FreeSpace / 1GB, 1)
+  $used = [math]::Round(($_.Size - $_.FreeSpace) / 1GB, 1)
+  $pct = if ($_.Size -gt 0) { [math]::Round((($_.Size - $_.FreeSpace) / $_.Size) * 100) } else { 0 }
+  "$($_.DeviceID) $size $used $free $pct"
+}
+`)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]interface{}{"raw": out}
+	var filesystems []map[string]string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 5 {
+			filesystems = append(filesystems, map[string]string{
+				"filesystem":  fields[0],
+				"size":        fields[1] + "G",
+				"used":        fields[2] + "G",
+				"avail":       fields[3] + "G",
+				"use_percent": fields[4],
+				"mounted_on":  fields[0] + "\\",
+			})
+		}
+	}
+	result["filesystems"] = filesystems
+	return result, nil
 }
 
 // Processes returns top processes and raw sample.
 func Processes() (processes []map[string]string, raw string, err error) {
-	var out string
-	if runtime.GOOS == "darwin" {
-		out, err = runCommand("ps", "aux")
-	} else {
-		out, err = runCommand("sh", "-c", "ps aux --sort=-%cpu 2>/dev/null | head -21")
-		if err != nil {
-			out, err = runCommand("sh", "-c", "ps aux | head -21")
-		}
+	switch runtime.GOOS {
+	case "windows":
+		return processesWindows()
+	case "darwin":
+		return processesDarwin()
+	default:
+		return processesLinux()
 	}
+}
+
+func processesDarwin() ([]map[string]string, string, error) {
+	out, err := runCommand("ps", "aux")
 	if err != nil {
 		return nil, "", err
 	}
-	processes = parsePsOutput(out)
-	if runtime.GOOS == "darwin" && len(processes) > 21 {
-		processes = processes[:21]
+	processes := parsePsOutput(out)
+	if len(processes) > 20 {
+		processes = processes[:20]
+	}
+	return processes, firstLines(out, 22), nil
+}
+
+func processesLinux() ([]map[string]string, string, error) {
+	out, err := runCommand("ps", "aux", "--sort=-%cpu")
+	if err != nil {
+		out, err = runCommand("ps", "aux")
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	processes := parsePsOutput(out)
+	if len(processes) > 20 {
+		processes = processes[:20]
+	}
+	return processes, firstLines(out, 22), nil
+}
+
+func processesWindows() ([]map[string]string, string, error) {
+	out, err := powershell(`
+Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 | ForEach-Object {
+  $cpu = if ($_.CPU) { [math]::Round($_.CPU, 1) } else { 0 }
+  $mem = [math]::Round($_.WorkingSet64 / 1MB, 1)
+  "$($_.Id) $cpu $mem $($_.ProcessName)"
+}
+`)
+	if err != nil {
+		return nil, "", err
+	}
+	var processes []map[string]string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 4 {
+			processes = append(processes, map[string]string{
+				"user":    "-",
+				"pid":     fields[0],
+				"cpu":     fields[1],
+				"mem":     fields[2],
+				"command": strings.Join(fields[3:], " "),
+			})
+		}
 	}
 	return processes, firstLines(out, 22), nil
 }

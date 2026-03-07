@@ -8,11 +8,11 @@ OpsAgent-AI is one Go application using [Google ADK for Go](https://github.com/g
 
 - **CLI (Cobra)** – Parses your query and invokes the agent in-process.
 - **ADK Agent (Gemini, OpenAI, or Anthropic)** – Decides which diagnostic tools to run and turns their output into a human-readable diagnosis.
-- **Diagnostic tools** – Four in-process tools that run `top`, `free`/`vm_stat`, `df`, and `ps` on the current machine and return structured data.
+- **Diagnostic tools** – Four in-process tools that gather CPU, memory, disk, and process data using OS-native commands (Linux, macOS, and Windows).
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  opsagent-ai (single binary)                             │
+│  opsagent (single binary)                             │
 │  ┌─────────┐    ┌─────────────┐    ┌─────────────────┐  │
 │  │  CLI    │───►│  ADK Agent  │───►│ check_cpu       │  │
 │  │ (Cobra) │    │  (LLM)      │    │ check_memory    │  │
@@ -27,8 +27,11 @@ Diagnostics run on the machine where you execute the binary. No separate server 
 ## Requirements
 
 - **Go** 1.21+ (to build)
-- **API key** for your chosen provider: **GOOGLE_API_KEY** (Gemini), **OPENAI_API_KEY** (OpenAI), or **ANTHROPIC_API_KEY** (Anthropic)
-- **Linux or macOS** – Diagnostics use `top`/`free`/`df`/`ps` on Linux and `top`/`vm_stat`/`df`/`ps` on macOS
+- **API key** for your chosen provider
+- **Linux, macOS, or Windows**
+  - Linux: uses `top`, `free`, `df`, `ps`
+  - macOS: uses `top`, `vm_stat`, `df`, `ps`
+  - Windows: uses PowerShell (`Get-CimInstance`, `Get-Process`)
 
 ## Installation
 
@@ -37,67 +40,103 @@ Diagnostics run on the machine where you execute the binary. No separate server 
 From GitHub:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/josephpaul/opsagent-ai/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/josephpaul/opsagent/main/install.sh | bash
 ```
 
 Or clone and run from project root:
 
 ```bash
-git clone https://github.com/josephpaul/opsagent-ai.git && cd opsagent-ai && ./install.sh
+git clone https://github.com/josephpaul/opsagent.git && cd opsagent && ./install.sh
 ```
 
-The script builds the binary and copies it to `/usr/local/bin` (or prints a `sudo cp` command if needed).
+The script builds the binary and copies it to `/usr/local/bin`. Then run `opsagent config set` to save your API key.
 
 ### Manual build
 
 ```bash
-cd opsagent-ai
-go build -o opsagent-ai .
-sudo cp opsagent-ai /usr/local/bin/   # optional
+cd opsagent
+go build -o opsagent .
+sudo cp opsagent /usr/local/bin/   # Linux/macOS (optional)
 ```
+
+On Windows (PowerShell):
+
+```powershell
+cd opsagent
+go build -o opsagent.exe .
+```
+
+## Quick Start
+
+```bash
+# 1. One-time setup — choose your provider and paste your API key:
+opsagent config set
+
+# 2. Run from anywhere:
+opsagent "why is my server slow"
+opsagent "check cpu"
+opsagent "check disk usage"
+```
+
+That's it. No `export`, no `.env`, and no manual config-file editing.
 
 ## Usage
 
-Set the API key for your chosen provider (via environment variable or a `.env` file in the current directory), then run the CLI:
-
 ```bash
-# Option 1: use a .env file (copy .env.example to .env and add your keys)
-# Option 2: export in the shell
-
-# Default: Gemini
-export GOOGLE_API_KEY=your_key
-opsagent-ai "why is my server slow"
-opsagent-ai "check cpu"
-opsagent-ai "check disk usage"
-
-# OpenAI
-export OPENAI_API_KEY=your_key
-opsagent-ai --provider openai --model gpt-4o "check memory"
-
-# Anthropic
-export ANTHROPIC_API_KEY=your_key
-opsagent-ai --provider anthropic --model claude-sonnet-4-20250514 "check top processes"
+opsagent "check memory"
+opsagent "check top processes"
+opsagent --provider openai --model gpt-4o "check disk usage"
 ```
 
 Flags:
 
-- **--provider** – `gemini` (default), `openai`, or `anthropic`
+- **--provider** – `gemini`, `openai`, or `anthropic`
 - **--model** – Model name; defaults: `gemini-2.5-flash` (Gemini), `gpt-4o` (OpenAI), `claude-sonnet-4-20250514` (Anthropic)
 
-Output format:
-
-```
---- Diagnosis ---
-<one-line summary>
-
---- Details ---
-<additional explanation>
-```
+The CLI auto-detects the provider from whichever key is configured (no `--provider` needed if only one key exists).
 
 ## Configuration
 
-- **GOOGLE_API_KEY** (required) – Set in the environment or in a `.env` file in the current directory if you add a small env loader.
-- **--model** – Gemini model name (default: `gemini-2.5-flash`).
+### Interactive setup (recommended)
+
+```bash
+opsagent config set
+```
+
+Walks you through choosing a provider and entering your API key.
+
+### Other config commands
+
+```bash
+opsagent config set-provider openai
+opsagent config set-model gpt-4o
+opsagent config set-base-url https://api.openai.com/v1
+opsagent config show          # Show current config (keys masked)
+opsagent config path          # Print config file location
+opsagent config set-key KEY VALUE  # Set a specific key directly
+opsagent config unset KEY     # Remove a saved key
+```
+
+### Config file location
+
+| OS | Path |
+|---|---|
+| macOS | `~/.config/opsagent/config.env` |
+| Linux | `~/.config/opsagent/config.env` |
+| Windows | `%APPDATA%\opsagent\config.env` |
+
+### Supported keys
+
+| Variable | Provider |
+|---|---|
+| `GOOGLE_API_KEY` | Gemini |
+| `OPENAI_API_KEY` | OpenAI |
+| `ANTHROPIC_API_KEY` | Anthropic |
+| `OPENAI_BASE_URL` | OpenAI-compatible APIs |
+| `OPSAGENT_PROVIDER` | Default provider |
+| `OPSAGENT_MODEL` | Default model |
+
+All of these can be set from the CLI, so you never need a `.env` file.
 
 ## License
 
