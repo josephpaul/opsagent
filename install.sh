@@ -99,12 +99,7 @@ install_from_source() {
   echo "==> Building from source..."
 
   if ! command -v go &>/dev/null; then
-    echo ""
-    echo "Error: Go is not installed and no pre-built binary is available."
-    echo ""
-    echo "Options:"
-    echo "  1. Install Go (https://go.dev/dl/) and re-run this script"
-    echo "  2. Download a pre-built binary from https://github.com/${REPO}/releases"
+    echo "Error: No pre-built binary available and Go is not installed. Please install Go 1.21+ (https://go.dev/dl/) to build from source."
     exit 1
   fi
 
