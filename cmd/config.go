@@ -229,7 +229,7 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	for k, v := range pairs {
-		fmt.Printf("  %s = %s\n", k, maskValue(k, v))
+		fmt.Printf("  %s: %s\n", k, maskValue(k, v))
 	}
 	fmt.Println()
 

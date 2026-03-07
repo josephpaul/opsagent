@@ -121,9 +121,9 @@ opsagent config unset KEY     # Remove a saved key
 
 | OS | Path |
 |---|---|
-| macOS | `~/.config/opsagent/config.env` |
-| Linux | `~/.config/opsagent/config.env` |
-| Windows | `%APPDATA%\opsagent\config.env` |
+| macOS | `~/.config/opsagent/config.yaml` |
+| Linux | `~/.config/opsagent/config.yaml` |
+| Windows | `%APPDATA%\opsagent\config.yaml` |
 
 ### Supported keys
 
