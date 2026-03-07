@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const Version = "1.0.0"
+var Version = "1.0.0"
 
 var provider string
 var model string
