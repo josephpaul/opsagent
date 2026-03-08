@@ -4,15 +4,23 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
+	"github.com/josephpaul/opsagent/agent"
+	"github.com/josephpaul/opsagent/internal/config"
+	"github.com/josephpaul/opsagent/internal/storage"
 	"github.com/josephpaul/opsagent/internal/telegram"
 	"github.com/spf13/cobra"
+	adkagent "google.golang.org/adk/agent"
+	"google.golang.org/adk/runner"
+	"google.golang.org/genai"
 )
 
 var (
 	tgToken         string
-	tgChatID        int64
+	tgUserID        int64
 	tgPort          int
 	tgWebhookURL    string
 	tgWebhookSecret string
@@ -39,7 +47,11 @@ Manage the service:
 Setup:
   1. Create a bot via @BotFather on Telegram to get your bot token
   2. Save the token: opsagent config set-key TELEGRAM_BOT_TOKEN <token>
-  3. Install as a service: opsagent telegram install --mode webhook --webhook-url <URL>`,
+  3. Save your user ID: opsagent config set-key TELEGRAM_USER_ID <your_numeric_id>
+  4. Install as a service: opsagent telegram install --mode webhook --webhook-url <URL>
+
+TELEGRAM_USER_ID is required. Without it, no Telegram feature will start.
+Only messages from the configured user ID receive responses.`,
 }
 
 var telegramWebhookCmd = &cobra.Command{
@@ -88,7 +100,7 @@ var tgInstallMode string
 
 func init() {
 	telegramCmd.PersistentFlags().StringVar(&tgToken, "token", "", "Telegram bot token (or set TELEGRAM_BOT_TOKEN)")
-	telegramCmd.PersistentFlags().Int64Var(&tgChatID, "chat-id", 0, "Restrict to this chat ID (or set TELEGRAM_CHAT_ID)")
+	telegramCmd.PersistentFlags().Int64Var(&tgUserID, "user-id", 0, "Your Telegram user ID (or set TELEGRAM_USER_ID; required)")
 
 	telegramWebhookCmd.Flags().IntVar(&tgPort, "port", 8443, "Port for the webhook HTTP server")
 	telegramWebhookCmd.Flags().StringVar(&tgWebhookURL, "webhook-url", "", "Public URL where Telegram sends updates (required)")
@@ -109,8 +121,8 @@ func init() {
 	rootCmd.AddCommand(telegramCmd)
 }
 
-func resolveTelegramConfig() (string, int64, error) {
-	token := tgToken
+func resolveTelegramConfig() (token string, userID int64, err error) {
+	token = tgToken
 	if token == "" {
 		token = os.Getenv("TELEGRAM_BOT_TOKEN")
 	}
@@ -118,21 +130,24 @@ func resolveTelegramConfig() (string, int64, error) {
 		return "", 0, fmt.Errorf("bot token required: use --token or 'opsagent config set-key TELEGRAM_BOT_TOKEN <token>'")
 	}
 
-	chatID := tgChatID
-	if chatID == 0 {
-		if env := os.Getenv("TELEGRAM_CHAT_ID"); env != "" {
+	userID = tgUserID
+	if userID == 0 {
+		if env := os.Getenv("TELEGRAM_USER_ID"); env != "" {
 			parsed, err := strconv.ParseInt(env, 10, 64)
 			if err == nil {
-				chatID = parsed
+				userID = parsed
 			}
 		}
 	}
+	if userID == 0 {
+		return "", 0, fmt.Errorf("TELEGRAM_USER_ID is required: use --user-id or 'opsagent config set-key TELEGRAM_USER_ID <your_id>'")
+	}
 
-	return token, chatID, nil
+	return token, userID, nil
 }
 
 func runTelegramWebhook(cmd *cobra.Command, args []string) error {
-	token, chatID, err := resolveTelegramConfig()
+	token, userID, err := resolveTelegramConfig()
 	if err != nil {
 		return err
 	}
@@ -146,6 +161,12 @@ func runTelegramWebhook(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no API key configured for provider %q. Run 'opsagent config set' first", effective)
 	}
 
+	store, a, r, err := setupSessionAgent(effective, modelName)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
 	webhookSecret := tgWebhookSecret
 	if webhookSecret == "" {
 		webhookSecret = os.Getenv("TELEGRAM_WEBHOOK_SECRET")
@@ -158,15 +179,14 @@ func runTelegramWebhook(cmd *cobra.Command, args []string) error {
 		Port:          tgPort,
 		WebhookURL:    tgWebhookURL,
 		WebhookSecret: webhookSecret,
-		AllowedChat:   chatID,
-		Diagnose: func(ctx context.Context, query string) (string, error) {
-			return diagnoseQuery(ctx, effective, modelName, query)
-		},
+		AllowedUserID: userID,
+		Diagnose:      sessionDiagnoseFunc(store, a, r),
+		Clear:         sessionClearFunc(store),
 	})
 }
 
 func runTelegramPoll(cmd *cobra.Command, args []string) error {
-	token, chatID, err := resolveTelegramConfig()
+	token, userID, err := resolveTelegramConfig()
 	if err != nil {
 		return err
 	}
@@ -177,15 +197,95 @@ func runTelegramPoll(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no API key configured for provider %q. Run 'opsagent config set' first", effective)
 	}
 
+	store, a, r, err := setupSessionAgent(effective, modelName)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
 	client := telegram.NewClient(token)
 
 	return telegram.RunPoll(context.Background(), telegram.PollConfig{
-		Client:      client,
-		AllowedChat: chatID,
-		Diagnose: func(ctx context.Context, query string) (string, error) {
-			return diagnoseQuery(ctx, effective, modelName, query)
-		},
+		Client:        client,
+		AllowedUserID: userID,
+		Diagnose:      sessionDiagnoseFunc(store, a, r),
+		Clear:         sessionClearFunc(store),
 	})
+}
+
+func setupSessionAgent(providerName, modelName string) (*storage.SQLiteService, adkagent.Agent, *runner.Runner, error) {
+	ctx := context.Background()
+
+	dir, err := config.Dir()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("config dir: %w", err)
+	}
+	dbPath := filepath.Join(dir, "sessions.db")
+
+	store, err := storage.NewSQLiteService(dbPath)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("open session store: %w", err)
+	}
+
+	a, err := agent.NewAgent(ctx, providerName, modelName)
+	if err != nil {
+		store.Close()
+		return nil, nil, nil, fmt.Errorf("create agent: %w", err)
+	}
+
+	r, err := runner.New(runner.Config{
+		AppName:        "opsagent",
+		Agent:          a,
+		SessionService: store.InnerService(),
+	})
+	if err != nil {
+		store.Close()
+		return nil, nil, nil, fmt.Errorf("create runner: %w", err)
+	}
+
+	return store, a, r, nil
+}
+
+func sessionDiagnoseFunc(store *storage.SQLiteService, a adkagent.Agent, r *runner.Runner) telegram.DiagnoseFunc {
+	return func(ctx context.Context, userID, query string) (string, error) {
+		sess, err := store.GetOrCreateSession(ctx, "opsagent", userID)
+		if err != nil {
+			return "", fmt.Errorf("get session: %w", err)
+		}
+
+		userMsg := &genai.Content{
+			Parts: []*genai.Part{genai.NewPartFromText(query)},
+			Role:  string(genai.RoleUser),
+		}
+
+		var fullText strings.Builder
+		for event, err := range r.Run(ctx, userID, sess.ID(), userMsg, adkagent.RunConfig{
+			StreamingMode: adkagent.StreamingModeNone,
+		}) {
+			if err != nil {
+				return "", fmt.Errorf("agent run: %w", err)
+			}
+			if event.Content != nil {
+				for _, p := range event.Content.Parts {
+					if p.Text != "" {
+						fullText.WriteString(p.Text)
+					}
+				}
+			}
+		}
+
+		text := strings.TrimSpace(fullText.String())
+		if text == "" {
+			return "No diagnosis generated.", nil
+		}
+		return text, nil
+	}
+}
+
+func sessionClearFunc(store *storage.SQLiteService) telegram.ClearFunc {
+	return func(ctx context.Context, userID string) error {
+		return store.DeleteUserSessions(ctx, "opsagent", userID)
+	}
 }
 
 func runTelegramInstall(cmd *cobra.Command, args []string) error {

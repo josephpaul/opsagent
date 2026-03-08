@@ -15,8 +15,13 @@ import (
 	"time"
 )
 
-// DiagnoseFunc is the function signature for running an AI diagnosis.
-type DiagnoseFunc func(ctx context.Context, query string) (string, error)
+// DiagnoseFunc runs an AI diagnosis. The userID identifies the conversation
+// (e.g. "tg-123456" for Telegram chats) so the session store can maintain
+// per-user memory.
+type DiagnoseFunc func(ctx context.Context, userID, query string) (string, error)
+
+// ClearFunc clears the conversation history for a user.
+type ClearFunc func(ctx context.Context, userID string) error
 
 // WebhookConfig holds the settings for the webhook server.
 type WebhookConfig struct {
@@ -24,8 +29,9 @@ type WebhookConfig struct {
 	Port          int
 	WebhookURL    string
 	WebhookSecret string // if empty, a random token is generated per startup
-	AllowedChat   int64  // 0 = allow all chats
+	AllowedUserID int64  // only respond to messages from this Telegram user ID
 	Diagnose      DiagnoseFunc
+	Clear         ClearFunc
 }
 
 // RunWebhook starts an HTTP server that receives Telegram webhook pushes.
@@ -54,9 +60,10 @@ func RunWebhook(ctx context.Context, cfg WebhookConfig) error {
 	log.Printf("[telegram] webhook registered: %s (with secret token verification)", fullURL)
 
 	handler := &messageHandler{
-		client:      cfg.Client,
-		allowedChat: cfg.AllowedChat,
-		diagnose:    cfg.Diagnose,
+		client:        cfg.Client,
+		allowedUserID: cfg.AllowedUserID,
+		diagnose:      cfg.Diagnose,
+		clear:         cfg.Clear,
 	}
 
 	mux := http.NewServeMux()
@@ -104,9 +111,10 @@ func RunWebhook(ctx context.Context, cfg WebhookConfig) error {
 
 // PollConfig holds the settings for the polling loop.
 type PollConfig struct {
-	Client      *Client
-	AllowedChat int64
-	Diagnose    DiagnoseFunc
+	Client        *Client
+	AllowedUserID int64
+	Diagnose      DiagnoseFunc
+	Clear         ClearFunc
 }
 
 // RunPoll starts a long-polling loop that fetches messages from Telegram.
@@ -117,9 +125,10 @@ func RunPoll(ctx context.Context, cfg PollConfig) error {
 	cfg.Client.DeleteWebhook()
 
 	handler := &messageHandler{
-		client:      cfg.Client,
-		allowedChat: cfg.AllowedChat,
-		diagnose:    cfg.Diagnose,
+		client:        cfg.Client,
+		allowedUserID: cfg.AllowedUserID,
+		diagnose:      cfg.Diagnose,
+		clear:         cfg.Clear,
 	}
 
 	log.Println("[telegram] polling for messages (Ctrl+C to stop)...")
@@ -148,9 +157,10 @@ func RunPoll(ctx context.Context, cfg PollConfig) error {
 }
 
 type messageHandler struct {
-	client      *Client
-	allowedChat int64
-	diagnose    DiagnoseFunc
+	client        *Client
+	allowedUserID int64
+	diagnose      DiagnoseFunc
+	clear         ClearFunc
 }
 
 func (h *messageHandler) handle(ctx context.Context, update Update) {
@@ -161,14 +171,21 @@ func (h *messageHandler) handle(ctx context.Context, update Update) {
 		return
 	}
 
-	if h.allowedChat != 0 && chatID != h.allowedChat {
-		log.Printf("[telegram] ignored message from unauthorized chat %d", chatID)
+	var senderID int64
+	if update.Message.From != nil {
+		senderID = update.Message.From.ID
+	}
+
+	if h.allowedUserID != 0 && senderID != h.allowedUserID {
 		return
 	}
 
+	userID := fmt.Sprintf("tg-%d", senderID)
+
 	if text == "/start" {
 		h.client.SendMessage(chatID, "Welcome to OpsAgent! Send me a diagnostic query like:\n\n"+
-			"• check cpu\n• why is my server slow\n• check disk usage")
+			"• check cpu\n• why is my server slow\n• check disk usage\n\n"+
+			"Use /clear to reset conversation history.")
 		return
 	}
 
@@ -177,10 +194,22 @@ func (h *messageHandler) handle(ctx context.Context, update Update) {
 		return
 	}
 
+	if text == "/clear" {
+		if h.clear != nil {
+			if err := h.clear(ctx, userID); err != nil {
+				log.Printf("[telegram] clear error for %s: %v", userID, err)
+				h.client.SendMessage(chatID, fmt.Sprintf("Error clearing history: %v", err))
+				return
+			}
+		}
+		h.client.SendMessage(chatID, "Conversation history cleared.")
+		return
+	}
+
 	log.Printf("[telegram] query from chat %d: %s", chatID, text)
 	h.client.SendMessage(chatID, "Diagnosing...")
 
-	diagnosis, err := h.diagnose(ctx, text)
+	diagnosis, err := h.diagnose(ctx, userID, text)
 	if err != nil {
 		log.Printf("[telegram] diagnosis error: %v", err)
 		h.client.SendMessage(chatID, fmt.Sprintf("Error: %v", err))

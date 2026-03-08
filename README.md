@@ -22,10 +22,11 @@ OpsAgent-AI is one Go application using [Google ADK for Go](https://github.com/g
 │  ┌──────────┐          │          └─────────────────┘       │
 │  │ Telegram │◄─────────┘                                    │
 │  │  Bot     │  (webhook / poll)                             │
-│  └──────────┘                                               │
-│  ┌──────────┐                                               │
-│  │ Monitor  │──► threshold alerts ──► Telegram / logs       │
-│  └──────────┘                                               │
+│  └──────────┘          │                                    │
+│  ┌──────────┐   ┌──────┴──────┐                             │
+│  │ Monitor  │   │ SQLite      │  sessions.db                │
+│  │          │──►│ Sessions    │  (conversation memory)      │
+│  └──────────┘   └─────────────┘                             │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -156,11 +157,48 @@ opsagent config unset KEY     # Remove a saved key
 | `OPENAI_BASE_URL` | OpenAI-compatible APIs |
 | `OPSAGENT_PROVIDER` | Default provider |
 | `OPSAGENT_MODEL` | Default model |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot |
-| `TELEGRAM_CHAT_ID` | Telegram bot |
-| `TELEGRAM_WEBHOOK_SECRET` | Telegram webhook verification |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token (from @BotFather) |
+| `TELEGRAM_USER_ID` | **Required for Telegram.** Your numeric Telegram user ID. Only this user can interact with the bot. |
+| `TELEGRAM_CHAT_ID` | Destination chat ID for monitor alerts |
+| `TELEGRAM_WEBHOOK_SECRET` | Webhook request verification secret |
 
 All of these can be set from the CLI, so you never need a `.env` file.
+
+## Conversation Memory
+
+OpsAgent remembers previous interactions so the AI agent has context across multiple queries. Memory is stored locally in a SQLite database alongside your config.
+
+| OS | Database path |
+|---|---|
+| macOS | `~/.config/opsagent/sessions.db` |
+| Linux | `~/.config/opsagent/sessions.db` |
+| Windows | `%APPDATA%\opsagent\sessions.db` |
+
+### How it works
+
+- **CLI**: Consecutive `opsagent "..."` commands share a session, so the agent remembers what you asked before. Use `--no-memory` to start fresh for a single query.
+- **Telegram bot**: Each chat gets its own session. The bot remembers the conversation thread per user/group.
+- **Monitor**: Background alerts are stateless — each diagnosis starts fresh.
+
+The last 20 messages are loaded into the LLM context to keep token usage bounded. Older messages stay in the database but aren't sent to the model.
+
+### Clearing history
+
+```bash
+opsagent clear                # Clear CLI conversation history
+opsagent clear --user tg-123  # Clear a specific Telegram chat's history
+opsagent clear --all          # Clear all stored sessions
+```
+
+In Telegram, send `/clear` to the bot to reset your conversation.
+
+### Disabling memory
+
+```bash
+opsagent --no-memory "check cpu"
+```
+
+This uses a fresh in-memory session for that single query without touching the database.
 
 ## Background Monitoring
 
@@ -230,6 +268,12 @@ Run OpsAgent as a Telegram bot so you can send diagnostic queries from your phon
    ```bash
    opsagent config set-key TELEGRAM_BOT_TOKEN <token>
    ```
+4. Save your Telegram user ID (get it from [@userinfobot](https://t.me/userinfobot)):
+   ```bash
+   opsagent config set-key TELEGRAM_USER_ID <your_numeric_id>
+   ```
+
+`TELEGRAM_USER_ID` is **required**. Without it, no Telegram command will start. Only messages from this user ID get a response — all others are silently ignored.
 
 ### Webhook mode (recommended for production)
 
@@ -244,7 +288,7 @@ opsagent telegram webhook --token <BOT_TOKEN> --webhook-url https://your-server.
 | `--token` | env `TELEGRAM_BOT_TOKEN` | Bot token from BotFather |
 | `--webhook-url` | *(required)* | Public HTTPS URL for your server |
 | `--port` | `8443` | Local port for the HTTP listener |
-| `--chat-id` | `0` (all) | Restrict to a specific chat ID |
+| `--user-id` | env `TELEGRAM_USER_ID` | **Required.** Your Telegram user ID — only this user gets responses |
 | `--webhook-secret` | env `TELEGRAM_WEBHOOK_SECRET` | Secret for verifying requests are from Telegram (auto-generated if empty) |
 
 The webhook endpoint is `POST /webhook/telegram` on the configured port. Every incoming request is verified using the `X-Telegram-Bot-Api-Secret-Token` header. You can set a persistent secret via config:
@@ -271,6 +315,7 @@ Once the bot is running, send messages in Telegram:
 |---|---|
 | `/start` | Welcome message with usage hints |
 | `/status` | Confirms the bot is running |
+| `/clear` | Clears conversation history for your chat |
 | Any text | Runs an AI-powered server diagnosis and replies |
 
 ### Install as a background service
@@ -298,7 +343,15 @@ This creates a **systemd** user service on Linux or a **launchd** agent on macOS
 
 ### Restricting access
 
-Use `--chat-id` to only respond to messages from your chat. To find your chat ID, start the bot in poll mode without `--chat-id` and send it a message — the logs will show `query from chat <ID>`.
+`TELEGRAM_USER_ID` is mandatory for all Telegram features. Only messages from the configured user ID receive a response — all others are silently dropped.
+
+To find your Telegram user ID:
+- Message [@userinfobot](https://t.me/userinfobot) on Telegram — it replies with your numeric ID
+- Or use the Telegram Bot API: `https://api.telegram.org/bot<TOKEN>/getUpdates` after sending a message to your bot, and look for `message.from.id`
+
+```bash
+opsagent config set-key TELEGRAM_USER_ID 123456789
+```
 
 ## Updating
 

@@ -4,15 +4,24 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/josephpaul/opsagent/agent"
+	"github.com/josephpaul/opsagent/internal/config"
+	"github.com/josephpaul/opsagent/internal/storage"
 	"github.com/spf13/cobra"
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 )
+
+var noMemory bool
+
+func init() {
+	rootCmd.Flags().BoolVar(&noMemory, "no-memory", false, "Disable conversation memory (use a fresh session)")
+}
 
 func hasProviderKey(p string) bool {
 	switch p {
@@ -86,13 +95,39 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create agent: %w", err)
 	}
 
-	sessionService := session.InMemoryService()
-	sess, err := sessionService.Create(ctx, &session.CreateRequest{
-		AppName: "opsagent",
-		UserID:  "cli",
-	})
-	if err != nil {
-		return fmt.Errorf("create session: %w", err)
+	var sessionService session.Service
+	var sessionID string
+	userID := "cli"
+
+	if noMemory {
+		sessionService = session.InMemoryService()
+		sess, err := sessionService.Create(ctx, &session.CreateRequest{
+			AppName: "opsagent",
+			UserID:  userID,
+		})
+		if err != nil {
+			return fmt.Errorf("create session: %w", err)
+		}
+		sessionID = sess.Session.ID()
+	} else {
+		dir, err := config.Dir()
+		if err != nil {
+			return fmt.Errorf("config dir: %w", err)
+		}
+		dbPath := filepath.Join(dir, "sessions.db")
+
+		store, err := storage.NewSQLiteService(dbPath)
+		if err != nil {
+			return fmt.Errorf("open session store: %w", err)
+		}
+		defer store.Close()
+
+		sess, err := store.GetOrCreateSession(ctx, "opsagent", userID)
+		if err != nil {
+			return fmt.Errorf("get session: %w", err)
+		}
+		sessionService = store.InnerService()
+		sessionID = sess.ID()
 	}
 
 	r, err := runner.New(runner.Config{
@@ -112,7 +147,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	}
 
 	var fullText strings.Builder
-	for event, err := range r.Run(ctx, "cli", sess.Session.ID(), userMsg, adkagent.RunConfig{
+	for event, err := range r.Run(ctx, userID, sessionID, userMsg, adkagent.RunConfig{
 		StreamingMode: adkagent.StreamingModeNone,
 	}) {
 		if err != nil {
