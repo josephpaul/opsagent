@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/josephpaul/opsagent/internal/monitor"
+	"github.com/josephpaul/opsagent/internal/telegram"
 	"github.com/spf13/cobra"
 )
 
@@ -170,6 +172,7 @@ func updateFromBinary(client *http.Client, downloadURL string) error {
 	}
 
 	fmt.Println("Update complete!")
+	restartServices()
 	return nil
 }
 
@@ -225,5 +228,74 @@ func updateFromSource() error {
 	}
 
 	fmt.Println("Update complete! Built from source.")
+	restartServices()
 	return nil
+}
+
+func restartServices() {
+	fmt.Println()
+	fmt.Println("Checking running services...")
+
+	tgRestarted := restartTelegram()
+	monRestarted := restartMonitor()
+
+	if !tgRestarted && !monRestarted {
+		fmt.Println("  No services to restart.")
+	}
+}
+
+func restartTelegram() bool {
+	info, err := telegram.ServiceStatus()
+	if err != nil || !info.Installed {
+		return false
+	}
+
+	if !info.Running {
+		fmt.Printf("  Telegram bot: installed but was not running (skipped)\n")
+		return false
+	}
+
+	fmt.Printf("  Telegram bot: restarting...")
+	if err := telegram.StopService(); err != nil {
+		fmt.Printf(" stop failed: %v\n", err)
+		return false
+	}
+
+	time.Sleep(1 * time.Second)
+
+	if err := telegram.StartService(); err != nil {
+		fmt.Printf(" start failed: %v\n", err)
+		return false
+	}
+
+	fmt.Printf(" %sdone%s\n", colorGreen, colorReset)
+	return true
+}
+
+func restartMonitor() bool {
+	info, err := monitor.Status()
+	if err != nil || !info.Installed {
+		return false
+	}
+
+	if !info.Running {
+		fmt.Printf("  Monitor: installed but was not running (skipped)\n")
+		return false
+	}
+
+	fmt.Printf("  Monitor: restarting...")
+	if err := monitor.Stop(); err != nil {
+		fmt.Printf(" stop failed: %v\n", err)
+		return false
+	}
+
+	time.Sleep(1 * time.Second)
+
+	if err := monitor.Start(); err != nil {
+		fmt.Printf(" start failed: %v\n", err)
+		return false
+	}
+
+	fmt.Printf(" %sdone%s\n", colorGreen, colorReset)
+	return true
 }
