@@ -97,18 +97,20 @@ func runQuery(cmd *cobra.Command, args []string) error {
 
 	var sessionService session.Service
 	var sessionID string
+	var store *storage.SQLiteService
+	var sess session.Session
 	userID := "cli"
 
 	if noMemory {
 		sessionService = session.InMemoryService()
-		sess, err := sessionService.Create(ctx, &session.CreateRequest{
+		resp, err := sessionService.Create(ctx, &session.CreateRequest{
 			AppName: "opsagent",
 			UserID:  userID,
 		})
 		if err != nil {
 			return fmt.Errorf("create session: %w", err)
 		}
-		sessionID = sess.Session.ID()
+		sessionID = resp.Session.ID()
 	} else {
 		dir, err := config.Dir()
 		if err != nil {
@@ -116,13 +118,13 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		}
 		dbPath := filepath.Join(dir, "sessions.db")
 
-		store, err := storage.NewSQLiteService(dbPath)
+		store, err = storage.NewSQLiteService(dbPath)
 		if err != nil {
 			return fmt.Errorf("open session store: %w", err)
 		}
 		defer store.Close()
 
-		sess, err := store.GetOrCreateSession(ctx, "opsagent", userID)
+		sess, err = store.GetOrCreateSession(ctx, "opsagent", userID)
 		if err != nil {
 			return fmt.Errorf("get session: %w", err)
 		}
@@ -159,6 +161,12 @@ func runQuery(cmd *cobra.Command, args []string) error {
 					fullText.WriteString(p.Text)
 				}
 			}
+		}
+	}
+
+	if store != nil && sess != nil {
+		if err := store.PersistNewEvents(ctx, sess); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to persist session: %v\n", err)
 		}
 	}
 

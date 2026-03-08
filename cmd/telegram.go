@@ -274,6 +274,10 @@ func sessionDiagnoseFunc(store *storage.SQLiteService, a adkagent.Agent, r *runn
 			}
 		}
 
+		if err := store.PersistNewEvents(ctx, sess); err != nil {
+			return "", fmt.Errorf("persist session: %w", err)
+		}
+
 		text := strings.TrimSpace(fullText.String())
 		if text == "" {
 			return "No diagnosis generated.", nil

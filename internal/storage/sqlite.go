@@ -22,11 +22,17 @@ const maxRecentEvents = 20
 
 // SQLiteService wraps the ADK in-memory session service and persists
 // conversation events to a SQLite database so they survive restarts.
+//
+// The ADK runner uses InnerService() (the in-memory service) directly because
+// the in-memory AppendEvent does a type assertion to its private *session type.
+// After each runner invocation, callers must call PersistNewEvents to flush
+// any new in-memory events to SQLite.
 type SQLiteService struct {
-	inner    session.Service
-	db       *sql.DB
-	mu       sync.Mutex
-	sessions map[string]string // "appName:userID" -> sessionID
+	inner        session.Service
+	db           *sql.DB
+	mu           sync.Mutex
+	sessions     map[string]string // "appName:userID" -> sessionID
+	persistedLen map[string]int    // sessionID -> number of events already persisted
 }
 
 // NewSQLiteService opens (or creates) a SQLite database at dbPath and returns
@@ -56,9 +62,10 @@ func NewSQLiteService(dbPath string) (*SQLiteService, error) {
 	}
 
 	return &SQLiteService{
-		inner:    session.InMemoryService(),
-		db:       db,
-		sessions: make(map[string]string),
+		inner:        session.InMemoryService(),
+		db:           db,
+		sessions:     make(map[string]string),
+		persistedLen: make(map[string]int),
 	}, nil
 }
 
@@ -136,6 +143,7 @@ func (s *SQLiteService) createNewSession(ctx context.Context, appName, userID, k
 
 	sid := resp.Session.ID()
 	s.sessions[key] = sid
+	s.persistedLen[sid] = 0
 
 	_, err = s.db.Exec(
 		"INSERT INTO sessions (id, app_name, user_id) VALUES (?, ?, ?)",
@@ -183,6 +191,7 @@ func (s *SQLiteService) restoreSession(ctx context.Context, appName, userID, ses
 		stored[i], stored[j] = stored[j], stored[i]
 	}
 
+	replayed := 0
 	for _, se := range stored {
 		var content genai.Content
 		if err := json.Unmarshal([]byte(se.ContentJSON), &content); err != nil {
@@ -197,7 +206,10 @@ func (s *SQLiteService) restoreSession(ctx context.Context, appName, userID, ses
 		if err := s.inner.AppendEvent(ctx, resp.Session, event); err != nil {
 			continue
 		}
+		replayed++
 	}
+
+	s.persistedLen[sessionID] = replayed
 
 	return resp.Session, nil
 }
@@ -209,33 +221,59 @@ type storedEvent struct {
 	ContentJSON string
 }
 
-// AppendEvent appends an event to the in-memory session and persists it to SQLite.
-func (s *SQLiteService) AppendEvent(ctx context.Context, sess session.Session, event *session.Event) error {
-	if err := s.inner.AppendEvent(ctx, sess, event); err != nil {
-		return err
-	}
-
-	if event.Partial || event.Content == nil {
-		return nil
-	}
-
-	contentJSON, err := json.Marshal(event.Content)
-	if err != nil {
-		return nil
-	}
-
+// PersistNewEvents re-fetches the session from the in-memory service to pick up
+// events appended by the ADK runner, then writes any new events to SQLite.
+// Call this after each r.Run() completes.
+func (s *SQLiteService) PersistNewEvents(ctx context.Context, sess session.Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err = s.db.Exec(
-		"INSERT INTO events (session_id, event_id, author, role, content_json) VALUES (?, ?, ?, ?, ?)",
-		sess.ID(), event.ID, event.Author, event.Content.Role, string(contentJSON),
-	)
+	sid := sess.ID()
+
+	resp, err := s.inner.Get(ctx, &session.GetRequest{
+		AppName:   sess.AppName(),
+		UserID:    sess.UserID(),
+		SessionID: sid,
+	})
 	if err != nil {
-		return fmt.Errorf("persist event: %w", err)
+		return fmt.Errorf("re-fetch session: %w", err)
 	}
 
-	_, _ = s.db.Exec("UPDATE sessions SET updated_at = ? WHERE id = ?", time.Now(), sess.ID())
+	already := s.persistedLen[sid]
+	events := resp.Session.Events()
+	total := events.Len()
+
+	if total <= already {
+		return nil
+	}
+
+	for i := already; i < total; i++ {
+		ev := events.At(i)
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+
+		contentJSON, err := json.Marshal(ev.Content)
+		if err != nil {
+			continue
+		}
+
+		role := ev.Content.Role
+		if role == "" {
+			role = ev.Author
+		}
+
+		_, err = s.db.Exec(
+			"INSERT INTO events (session_id, event_id, author, role, content_json) VALUES (?, ?, ?, ?, ?)",
+			sid, ev.ID, ev.Author, role, string(contentJSON),
+		)
+		if err != nil {
+			return fmt.Errorf("persist event: %w", err)
+		}
+	}
+
+	s.persistedLen[sid] = total
+	_, _ = s.db.Exec("UPDATE sessions SET updated_at = ? WHERE id = ?", time.Now(), sid)
 	return nil
 }
 
@@ -253,6 +291,7 @@ func (s *SQLiteService) DeleteUserSessions(ctx context.Context, appName, userID 
 			SessionID: sessionID,
 		})
 		delete(s.sessions, key)
+		delete(s.persistedLen, sessionID)
 	}
 
 	_, err := s.db.Exec(
@@ -285,6 +324,7 @@ func (s *SQLiteService) DeleteAllSessions(ctx context.Context) error {
 	}
 
 	s.sessions = make(map[string]string)
+	s.persistedLen = make(map[string]int)
 	s.inner = session.InMemoryService()
 	return nil
 }
