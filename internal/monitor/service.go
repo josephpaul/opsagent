@@ -271,6 +271,9 @@ func installSystemd(cfg ServiceConfig) error {
 	if err := run("systemctl", "--user", "start", serviceName+".service"); err != nil {
 		return err
 	}
+
+	enableLinger()
+
 	fmt.Printf("Installed and started: %s\n", path)
 	fmt.Printf("  Logs: journalctl --user -u %s -f\n", serviceName)
 	return nil
@@ -383,6 +386,16 @@ func uninstallLaunchd() error {
 	}
 	fmt.Printf("Removed: %s\n", path)
 	return nil
+}
+
+func enableLinger() {
+	user := os.Getenv("USER")
+	if user == "" {
+		return
+	}
+	if err := exec.Command("loginctl", "enable-linger", user).Run(); err == nil {
+		fmt.Printf("  Enabled loginctl linger for user %s (service persists after logout)\n", user)
+	}
 }
 
 func run(name string, args ...string) error {

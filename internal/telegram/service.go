@@ -142,6 +142,9 @@ func installTGSystemd(cfg ServiceConfig) error {
 	if err := runCmd("systemctl", "--user", "start", tgServiceName+".service"); err != nil {
 		return err
 	}
+
+	enableLinger()
+
 	fmt.Printf("Installed and started: %s\n", path)
 	fmt.Printf("  Logs: journalctl --user -u %s -f\n", tgServiceName)
 	return nil
@@ -363,6 +366,16 @@ func parseTGPlistFile(info *ServiceStatusInfo, path string) {
 				info.Port = args[i+1]
 			}
 		}
+	}
+}
+
+func enableLinger() {
+	user := os.Getenv("USER")
+	if user == "" {
+		return
+	}
+	if err := exec.Command("loginctl", "enable-linger", user).Run(); err == nil {
+		fmt.Printf("  Enabled loginctl linger for user %s (service persists after logout)\n", user)
 	}
 }
 
