@@ -5,6 +5,7 @@ import (
 
 	"github.com/josephpaul/opsagent/internal/diagnostics"
 	"github.com/josephpaul/opsagent/internal/docker"
+	"github.com/josephpaul/opsagent/internal/nginx"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 )
@@ -166,6 +167,72 @@ func dockerContainerLogs(ctx tool.Context, input dockerContainerLogsArgs) (docke
 	return dockerContainerLogsResult{Logs: logs}, nil
 }
 
+type listNginxSitesArgs struct{}
+
+type listNginxSitesResult struct {
+	Sites []nginx.SiteSummary `json:"sites,omitempty" jsonschema:"Nginx server blocks with names, listen directives, proxy targets, and log files"`
+	Error string              `json:"error,omitempty" jsonschema:"Error message if the Nginx site listing failed"`
+}
+
+func listNginxSites(ctx tool.Context, input listNginxSitesArgs) (listNginxSitesResult, error) {
+	sites, err := nginx.ListSites()
+	if err != nil {
+		return listNginxSitesResult{Error: err.Error()}, nil
+	}
+	return listNginxSitesResult{Sites: sites}, nil
+}
+
+type inspectNginxSiteArgs struct {
+	Site string `json:"site" jsonschema:"Nginx site name, server_name, or config filename to inspect"`
+}
+
+type inspectNginxSiteResult struct {
+	Site  *nginx.SiteDetail `json:"site,omitempty" jsonschema:"Detailed Nginx site information including server names, listen directives, roots, proxy targets, and log files"`
+	Error string            `json:"error,omitempty" jsonschema:"Error message if the Nginx site inspection failed"`
+}
+
+func inspectNginxSite(ctx tool.Context, input inspectNginxSiteArgs) (inspectNginxSiteResult, error) {
+	site, err := nginx.InspectSite(input.Site)
+	if err != nil {
+		return inspectNginxSiteResult{Error: err.Error()}, nil
+	}
+	return inspectNginxSiteResult{Site: site}, nil
+}
+
+type inspectNginxRuntimeArgs struct{}
+
+type inspectNginxRuntimeResult struct {
+	Runtime *nginx.RuntimeInfo `json:"runtime,omitempty" jsonschema:"Nginx runtime and configuration summary including version, config test result, process state, config files, sites, and upstreams"`
+	Error   string             `json:"error,omitempty" jsonschema:"Error message if Nginx runtime inspection failed"`
+}
+
+func inspectNginxRuntime(ctx tool.Context, input inspectNginxRuntimeArgs) (inspectNginxRuntimeResult, error) {
+	runtime, err := nginx.RuntimeStatus()
+	if err != nil {
+		return inspectNginxRuntimeResult{Error: err.Error()}, nil
+	}
+	return inspectNginxRuntimeResult{Runtime: runtime}, nil
+}
+
+type nginxLogSampleArgs struct {
+	Site string `json:"site,omitempty" jsonschema:"Optional Nginx site name or server_name to narrow log lookup"`
+	Kind string `json:"kind,omitempty" jsonschema:"Log kind: error or access. Defaults to error"`
+	Tail int    `json:"tail,omitempty" jsonschema:"Optional number of recent log lines per matched file; defaults to 50 and is capped at 200"`
+}
+
+type nginxLogSampleResult struct {
+	Logs  []nginx.LogSample `json:"logs,omitempty" jsonschema:"Bounded recent Nginx access or error log samples"`
+	Error string            `json:"error,omitempty" jsonschema:"Error message if retrieving Nginx log samples failed"`
+}
+
+func nginxLogSample(ctx tool.Context, input nginxLogSampleArgs) (nginxLogSampleResult, error) {
+	logs, err := nginx.LogSamples(input.Site, input.Kind, input.Tail)
+	if err != nil {
+		return nginxLogSampleResult{Error: err.Error()}, nil
+	}
+	return nginxLogSampleResult{Logs: logs}, nil
+}
+
 // NewDiagnosticTools returns the host diagnostic and Docker inspection tools for the agent.
 func NewDiagnosticTools() ([]tool.Tool, error) {
 	cpuTool, err := functiontool.New(functiontool.Config{
@@ -225,6 +292,34 @@ func NewDiagnosticTools() ([]tool.Tool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker_container_logs tool: %w", err)
 	}
+	nginxSitesTool, err := functiontool.New(functiontool.Config{
+		Name:        "list_nginx_sites",
+		Description: "List Nginx server blocks with names, listen directives, proxy targets, and configured log files.",
+	}, listNginxSites)
+	if err != nil {
+		return nil, fmt.Errorf("list_nginx_sites tool: %w", err)
+	}
+	nginxSiteTool, err := functiontool.New(functiontool.Config{
+		Name:        "inspect_nginx_site",
+		Description: "Inspect one Nginx site by server_name or config filename, including roots, listen directives, proxy targets, and log files.",
+	}, inspectNginxSite)
+	if err != nil {
+		return nil, fmt.Errorf("inspect_nginx_site tool: %w", err)
+	}
+	nginxRuntimeTool, err := functiontool.New(functiontool.Config{
+		Name:        "inspect_nginx_runtime",
+		Description: "Inspect Nginx runtime and configuration state, including version, config test result, running master/worker processes, loaded config files, and upstreams.",
+	}, inspectNginxRuntime)
+	if err != nil {
+		return nil, fmt.Errorf("inspect_nginx_runtime tool: %w", err)
+	}
+	nginxLogsTool, err := functiontool.New(functiontool.Config{
+		Name:        "nginx_log_sample",
+		Description: "Get bounded recent Nginx access or error log samples, optionally narrowed to a specific site.",
+	}, nginxLogSample)
+	if err != nil {
+		return nil, fmt.Errorf("nginx_log_sample tool: %w", err)
+	}
 
 	return []tool.Tool{
 		cpuTool,
@@ -235,5 +330,9 @@ func NewDiagnosticTools() ([]tool.Tool, error) {
 		dockerProjectTool,
 		dockerStatsTool,
 		dockerLogsTool,
+		nginxSitesTool,
+		nginxSiteTool,
+		nginxRuntimeTool,
+		nginxLogsTool,
 	}, nil
 }
