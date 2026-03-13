@@ -22,12 +22,18 @@ Use the available tools to gather data from this machine:
 - check_memory: Memory usage (total, used, free, available)
 - check_disk: Disk usage per filesystem
 - check_processes: Top processes by CPU
+- list_docker_projects: Running Docker Compose projects and grouped service summary
+- inspect_docker_project: Detailed containers, ports, networks, mounts, and health for one Docker Compose project
+- docker_container_stats: Current CPU, memory, network, block IO, and PID stats for project containers
+- docker_container_logs: Recent bounded logs for project containers
 
 Based on the tool results, provide a clear diagnosis and details. If the user asks 'why is my server slow', call check_cpu, check_memory, and check_disk (and optionally check_processes), then summarize findings (e.g. high CPU, low memory, full disk) and name the main culprits (e.g. top process).
 
+If the user asks about Docker or containers, start with list_docker_projects to discover the Compose projects, then use inspect_docker_project for structure/details and docker_container_stats or docker_container_logs only when they help answer the question. Prefer the narrowest Docker tool that fits the question to avoid excessive output.
+
 Keep the diagnosis concise and actionable. Format the response as a short summary (diagnosis) followed by details.`
 
-// NewAgent creates an ADK LlmAgent with the given provider and model, and the four diagnostic tools.
+// NewAgent creates an ADK LlmAgent with the given provider and model, and the host/Docker diagnostic tools.
 // Provider must be "gemini", "openai", or "anthropic". Set the corresponding env: GOOGLE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY.
 func NewAgent(ctx context.Context, provider, modelName string) (agent.Agent, error) {
 	tools, err := NewDiagnosticTools()

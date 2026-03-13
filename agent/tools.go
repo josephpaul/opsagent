@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/josephpaul/opsagent/internal/diagnostics"
+	"github.com/josephpaul/opsagent/internal/docker"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 )
@@ -94,7 +95,78 @@ func checkProcesses(ctx tool.Context, input checkProcessesArgs) (checkProcessesR
 	return checkProcessesResult{Processes: processes}, nil
 }
 
-// NewDiagnosticTools returns the four diagnostic tools for the agent.
+type listDockerProjectsArgs struct{}
+
+type listDockerProjectsResult struct {
+	Projects []docker.ProjectSummary `json:"projects,omitempty" jsonschema:"Running Docker Compose projects with grouped service and health summary"`
+	Error    string                  `json:"error,omitempty" jsonschema:"Error message if the Docker project listing failed"`
+}
+
+func listDockerProjects(ctx tool.Context, input listDockerProjectsArgs) (listDockerProjectsResult, error) {
+	projects, err := docker.ListProjects()
+	if err != nil {
+		return listDockerProjectsResult{Error: err.Error()}, nil
+	}
+	return listDockerProjectsResult{Projects: projects}, nil
+}
+
+type inspectDockerProjectArgs struct {
+	Project string `json:"project" jsonschema:"Docker Compose project name to inspect"`
+}
+
+type inspectDockerProjectResult struct {
+	Project *docker.ProjectDetail `json:"project,omitempty" jsonschema:"Detailed Docker Compose project information including services, containers, networks, volumes, and images"`
+	Error   string                `json:"error,omitempty" jsonschema:"Error message if the project inspection failed"`
+}
+
+func inspectDockerProject(ctx tool.Context, input inspectDockerProjectArgs) (inspectDockerProjectResult, error) {
+	project, err := docker.InspectProject(input.Project)
+	if err != nil {
+		return inspectDockerProjectResult{Error: err.Error()}, nil
+	}
+	return inspectDockerProjectResult{Project: project}, nil
+}
+
+type dockerContainerStatsArgs struct {
+	Project   string `json:"project" jsonschema:"Docker Compose project name"`
+	Service   string `json:"service,omitempty" jsonschema:"Optional Docker Compose service name to narrow the stats lookup"`
+	Container string `json:"container,omitempty" jsonschema:"Optional container name or ID to narrow the stats lookup"`
+}
+
+type dockerContainerStatsResult struct {
+	Stats []docker.ContainerStat `json:"stats,omitempty" jsonschema:"Point-in-time Docker container stats including CPU, memory, network, block IO, and PIDs"`
+	Error string                 `json:"error,omitempty" jsonschema:"Error message if fetching container stats failed"`
+}
+
+func dockerContainerStats(ctx tool.Context, input dockerContainerStatsArgs) (dockerContainerStatsResult, error) {
+	stats, err := docker.ContainerStats(input.Project, input.Service, input.Container)
+	if err != nil {
+		return dockerContainerStatsResult{Error: err.Error()}, nil
+	}
+	return dockerContainerStatsResult{Stats: stats}, nil
+}
+
+type dockerContainerLogsArgs struct {
+	Project   string `json:"project" jsonschema:"Docker Compose project name"`
+	Service   string `json:"service,omitempty" jsonschema:"Optional Docker Compose service name to narrow log lookup"`
+	Container string `json:"container,omitempty" jsonschema:"Optional container name or ID to narrow log lookup"`
+	Tail      int    `json:"tail,omitempty" jsonschema:"Optional number of recent log lines per matched container; defaults to 50 and is capped at 200"`
+}
+
+type dockerContainerLogsResult struct {
+	Logs  []docker.ContainerLog `json:"logs,omitempty" jsonschema:"Recent bounded logs for one or more containers in a Docker Compose project"`
+	Error string                `json:"error,omitempty" jsonschema:"Error message if log retrieval failed"`
+}
+
+func dockerContainerLogs(ctx tool.Context, input dockerContainerLogsArgs) (dockerContainerLogsResult, error) {
+	logs, err := docker.ContainerLogs(input.Project, input.Service, input.Container, input.Tail)
+	if err != nil {
+		return dockerContainerLogsResult{Error: err.Error()}, nil
+	}
+	return dockerContainerLogsResult{Logs: logs}, nil
+}
+
+// NewDiagnosticTools returns the host diagnostic and Docker inspection tools for the agent.
 func NewDiagnosticTools() ([]tool.Tool, error) {
 	cpuTool, err := functiontool.New(functiontool.Config{
 		Name:        "check_cpu",
@@ -124,5 +196,44 @@ func NewDiagnosticTools() ([]tool.Tool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("check_processes tool: %w", err)
 	}
-	return []tool.Tool{cpuTool, memTool, diskTool, procTool}, nil
+
+	dockerProjectsTool, err := functiontool.New(functiontool.Config{
+		Name:        "list_docker_projects",
+		Description: "List running Docker Compose projects on this machine, including grouped services, running container counts, and basic health summary.",
+	}, listDockerProjects)
+	if err != nil {
+		return nil, fmt.Errorf("list_docker_projects tool: %w", err)
+	}
+	dockerProjectTool, err := functiontool.New(functiontool.Config{
+		Name:        "inspect_docker_project",
+		Description: "Inspect one Docker Compose project in detail, including service membership, containers, images, ports, networks, mounts, and health/state.",
+	}, inspectDockerProject)
+	if err != nil {
+		return nil, fmt.Errorf("inspect_docker_project tool: %w", err)
+	}
+	dockerStatsTool, err := functiontool.New(functiontool.Config{
+		Name:        "docker_container_stats",
+		Description: "Get current Docker container stats for a Docker Compose project. Optionally narrow by service or container.",
+	}, dockerContainerStats)
+	if err != nil {
+		return nil, fmt.Errorf("docker_container_stats tool: %w", err)
+	}
+	dockerLogsTool, err := functiontool.New(functiontool.Config{
+		Name:        "docker_container_logs",
+		Description: "Get bounded recent logs for containers in a Docker Compose project. Optionally narrow by service or container.",
+	}, dockerContainerLogs)
+	if err != nil {
+		return nil, fmt.Errorf("docker_container_logs tool: %w", err)
+	}
+
+	return []tool.Tool{
+		cpuTool,
+		memTool,
+		diskTool,
+		procTool,
+		dockerProjectsTool,
+		dockerProjectTool,
+		dockerStatsTool,
+		dockerLogsTool,
+	}, nil
 }
