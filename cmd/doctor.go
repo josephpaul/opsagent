@@ -75,6 +75,8 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	doctorTelegram()
 	fmt.Println()
+	doctorLogin()
+	fmt.Println()
 	doctorMonitor()
 	fmt.Println()
 	doctorSessions()
@@ -229,6 +231,85 @@ func doctorMonitor() {
 	}
 	if monInfo.LogPath != "" {
 		info("Log:", monInfo.LogPath)
+	}
+}
+
+func doctorLogin() {
+	fmt.Println(bold("  Login Notifications"))
+
+	pairs, _ := config.Read()
+
+	valueFor := func(key string) string {
+		val := pairs[key]
+		if val == "" {
+			val = os.Getenv(key)
+		}
+		return strings.TrimSpace(val)
+	}
+
+	token := valueFor("TELEGRAM_BOT_TOKEN")
+	chatID := valueFor("TELEGRAM_CHAT_ID")
+	enabled := valueFor("LOGIN_NOTIFY_ENABLED")
+	hostLabel := valueFor("LOGIN_NOTIFY_HOSTNAME_LABEL")
+
+	if token != "" {
+		ok("Bot Token:", maskValue("TELEGRAM_BOT_TOKEN", token))
+	} else {
+		fail("Bot Token:", "not set (required)")
+	}
+	if chatID != "" {
+		ok("Chat ID:", chatID)
+	} else {
+		fail("Chat ID:", "not set (required)")
+	}
+
+	switch strings.ToLower(enabled) {
+	case "", "true", "1", "yes":
+		if enabled == "" {
+			ok("Enabled:", "true (default)")
+		} else {
+			ok("Enabled:", enabled)
+		}
+	case "false", "0", "no":
+		warn("Enabled:", enabled)
+	default:
+		warn("Enabled:", enabled+" (unrecognized value)")
+	}
+
+	if hostLabel != "" {
+		info("Host Label:", hostLabel)
+	}
+
+	pamExecPath := detectPamExec()
+	if pamExecPath != "" {
+		ok("pam_exec.so:", pamExecPath)
+	} else {
+		warn("pam_exec.so:", "not found in common paths")
+	}
+
+	targetsFound := 0
+	for _, path := range pamTargetFiles() {
+		if !fileExists(path) {
+			warn(path+":", "missing")
+			continue
+		}
+		targetsFound++
+		if okHook, _ := pamFileContainsOpsagent(path); okHook {
+			ok(path+":", "opsagent hook installed")
+		} else {
+			warn(path+":", "present but opsagent hook not found")
+		}
+	}
+
+	if targetsFound == 0 {
+		warn("PAM Targets:", "no common PAM target files found")
+	}
+
+	if snippet, configPath, err := pamSnippet(); err == nil {
+		info("Expected Hook:", snippet)
+		info("Config Path:", configPath)
+	} else {
+		warn("Expected Hook:", "cannot determine: "+err.Error())
 	}
 }
 
