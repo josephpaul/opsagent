@@ -13,6 +13,7 @@ import (
 )
 
 const appName = "opsagent"
+const configPathEnv = "OPSAGENT_CONFIG_PATH"
 
 // Dir returns the OS-appropriate config directory for opsagent.
 func Dir() (string, error) {
@@ -37,6 +38,9 @@ func Dir() (string, error) {
 
 // FilePath returns the full path to the config file.
 func FilePath() (string, error) {
+	if override := strings.TrimSpace(os.Getenv(configPathEnv)); override != "" {
+		return override, nil
+	}
 	dir, err := Dir()
 	if err != nil {
 		return "", err

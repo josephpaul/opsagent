@@ -161,6 +161,8 @@ opsagent config unset KEY     # Remove a saved key
 | `TELEGRAM_USER_ID` | **Required for Telegram.** Your numeric Telegram user ID. Only this user can interact with the bot. |
 | `TELEGRAM_CHAT_ID` | Destination chat ID for monitor alerts |
 | `TELEGRAM_WEBHOOK_SECRET` | Webhook request verification secret |
+| `LOGIN_NOTIFY_ENABLED` | Enable or disable PAM-triggered login alerts (`true` by default) |
+| `LOGIN_NOTIFY_HOSTNAME_LABEL` | Optional hostname override shown in login alerts |
 
 All of these can be set from the CLI, so you never need a `.env` file.
 
@@ -255,6 +257,70 @@ Or save the tokens so every monitor run uses them:
 opsagent config set-key TELEGRAM_BOT_TOKEN <token>
 opsagent config set-key TELEGRAM_CHAT_ID <chat_id>
 ```
+
+## Login Notifications
+
+OpsAgent can send a Telegram alert every time PAM opens a successful login session. This keeps the notification logic inside `opsagent` while PAM acts as the event trigger.
+
+### Configure Telegram destination
+
+```bash
+opsagent config set-key TELEGRAM_BOT_TOKEN <token>
+opsagent config set-key TELEGRAM_CHAT_ID <chat_id>
+opsagent config set-key LOGIN_NOTIFY_ENABLED true
+```
+
+Optional hostname label override:
+
+```bash
+opsagent config set-key LOGIN_NOTIFY_HOSTNAME_LABEL batchai
+```
+
+### Install the PAM hook
+
+```bash
+sudo opsagent login install-pam
+opsagent login status
+```
+
+`opsagent login install-pam` automatically adds the OpsAgent PAM hook to the common PAM files when they exist:
+
+- `/etc/pam.d/sshd`
+- `/etc/pam.d/login`
+
+It is idempotent and creates a backup next to each edited file as `*.opsagent.bak`.
+
+If you only want to print the snippet without editing files:
+
+```bash
+opsagent login install-pam --print-only
+```
+
+Use an `optional` PAM hook so login is never blocked if notification delivery fails.
+
+### PAM snippet
+
+The installed line looks like this:
+
+```pam
+session optional pam_exec.so /usr/bin/env OPSAGENT_CONFIG_PATH=/home/your-user/.config/opsagent/config.yaml /usr/local/bin/opsagent login notify
+```
+
+The `OPSAGENT_CONFIG_PATH=...` part is important because PAM often runs `opsagent` as `root`; this ensures OpsAgent reads your user config instead of `/root/.config/opsagent/config.yaml`.
+
+When PAM invokes `opsagent login notify`, OpsAgent reads `PAM_USER`, `PAM_RHOST`, `PAM_SERVICE`, and `PAM_TTY`, then sends a Telegram message like:
+
+```text
+Login detected
+User: ubuntu
+Source: 203.0.113.10
+Service: sshd
+TTY: ssh
+Host: batchai
+Time: 2026-03-14 19:22:10 UTC
+```
+
+Keep an existing admin session open while testing PAM changes.
 
 ## Telegram Bot
 
