@@ -163,6 +163,8 @@ opsagent config unset KEY     # Remove a saved key
 | `TELEGRAM_WEBHOOK_SECRET` | Webhook request verification secret |
 | `LOGIN_NOTIFY_ENABLED` | Enable or disable PAM-triggered login alerts (`true` by default) |
 | `LOGIN_NOTIFY_HOSTNAME_LABEL` | Optional hostname override shown in login alerts |
+| `LOGIN_NOTIFY_TIMEZONE` | Optional IANA timezone for login alert timestamps (for example `Asia/Kolkata`) |
+| `LOGIN_NOTIFY_TIME_FORMAT` | Optional Go `time.Format` layout for login alert timestamps |
 
 All of these can be set from the CLI, so you never need a `.env` file.
 
@@ -275,6 +277,15 @@ Optional hostname label override:
 ```bash
 opsagent config set-key LOGIN_NOTIFY_HOSTNAME_LABEL batchai
 ```
+
+Optional time settings:
+
+```bash
+opsagent config set-key LOGIN_NOTIFY_TIMEZONE Asia/Kolkata
+opsagent config set-key LOGIN_NOTIFY_TIME_FORMAT "3:04pm 2 Jan 06"
+```
+
+`LOGIN_NOTIFY_TIME_FORMAT` uses Go's `time.Format` layout syntax, not `strftime`. If unset, OpsAgent uses `2006-01-02 15:04:05 MST`.
 
 ### Install the PAM hook
 

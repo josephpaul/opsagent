@@ -183,6 +183,14 @@ func runLoginStatus(cmd *cobra.Command, args []string) error {
 			hostLabel = "(auto hostname unavailable)"
 		}
 	}
+	timezone := strings.TrimSpace(os.Getenv("LOGIN_NOTIFY_TIMEZONE"))
+	if timezone == "" {
+		timezone = "UTC (default)"
+	}
+	timeFormat := strings.TrimSpace(os.Getenv("LOGIN_NOTIFY_TIME_FORMAT"))
+	if timeFormat == "" {
+		timeFormat = loginDefaultTimeFormat + " (default)"
+	}
 
 	fmt.Println("Login Notifications")
 	if token != "" {
@@ -197,6 +205,8 @@ func runLoginStatus(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("  Enabled:      %s\n", enabled)
 	fmt.Printf("  Host label:   %s\n", hostLabel)
+	fmt.Printf("  Time zone:    %s\n", timezone)
+	fmt.Printf("  Time format:  %s\n", timeFormat)
 
 	pamExecPath := detectPamExec()
 	if pamExecPath != "" {
@@ -247,6 +257,10 @@ func buildLoginNotification() (string, error) {
 	source := firstNonEmpty(os.Getenv("PAM_RHOST"), "local")
 	service := firstNonEmpty(os.Getenv("PAM_SERVICE"), "unknown")
 	tty := firstNonEmpty(os.Getenv("PAM_TTY"), "unknown")
+	location, format, err := loginTimeSettings()
+	if err != nil {
+		return "", err
+	}
 
 	return fmt.Sprintf(
 		"Login detected\nUser: %s\nSource: %s\nService: %s\nTTY: %s\nHost: %s\nTime: %s",
@@ -255,8 +269,28 @@ func buildLoginNotification() (string, error) {
 		service,
 		tty,
 		host,
-		time.Now().UTC().Format("2006-01-02 15:04:05 MST"),
+		time.Now().In(location).Format(format),
 	), nil
+}
+
+const loginDefaultTimeFormat = "2006-01-02 15:04:05 MST"
+
+func loginTimeSettings() (*time.Location, string, error) {
+	tz := strings.TrimSpace(os.Getenv("LOGIN_NOTIFY_TIMEZONE"))
+	location := time.UTC
+	if tz != "" {
+		loaded, err := time.LoadLocation(tz)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid LOGIN_NOTIFY_TIMEZONE %q: %w", tz, err)
+		}
+		location = loaded
+	}
+
+	format := strings.TrimSpace(os.Getenv("LOGIN_NOTIFY_TIME_FORMAT"))
+	if format == "" {
+		format = loginDefaultTimeFormat
+	}
+	return location, format, nil
 }
 
 func pamTargetFiles() []string {

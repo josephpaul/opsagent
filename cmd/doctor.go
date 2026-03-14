@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/josephpaul/opsagent/internal/config"
 	"github.com/josephpaul/opsagent/internal/monitor"
@@ -251,6 +252,8 @@ func doctorLogin() {
 	chatID := valueFor("TELEGRAM_CHAT_ID")
 	enabled := valueFor("LOGIN_NOTIFY_ENABLED")
 	hostLabel := valueFor("LOGIN_NOTIFY_HOSTNAME_LABEL")
+	timezone := valueFor("LOGIN_NOTIFY_TIMEZONE")
+	timeFormat := valueFor("LOGIN_NOTIFY_TIME_FORMAT")
 
 	if token != "" {
 		ok("Bot Token:", maskValue("TELEGRAM_BOT_TOKEN", token))
@@ -278,6 +281,18 @@ func doctorLogin() {
 
 	if hostLabel != "" {
 		info("Host Label:", hostLabel)
+	}
+	if timezone == "" {
+		info("Time Zone:", "UTC (default)")
+	} else if _, err := time.LoadLocation(timezone); err != nil {
+		warn("Time Zone:", timezone+" (invalid: "+err.Error()+")")
+	} else {
+		ok("Time Zone:", timezone)
+	}
+	if timeFormat == "" {
+		info("Time Format:", loginDefaultTimeFormat+" (default)")
+	} else {
+		info("Time Format:", timeFormat)
 	}
 
 	pamExecPath := detectPamExec()
