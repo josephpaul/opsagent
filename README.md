@@ -323,6 +323,7 @@ When PAM invokes `opsagent login notify`, OpsAgent reads `PAM_USER`, `PAM_RHOST`
 
 ```text
 Login detected
+Event: Login
 User: ubuntu
 Source: 203.0.113.10
 Service: sshd
@@ -330,6 +331,10 @@ TTY: ssh
 Host: batchai
 Time: 2026-03-14 19:22:10 UTC
 ```
+
+`Event` is derived from PAM:
+- `open_session` -> `Login`
+- `close_session` -> `Logout`
 
 Keep an existing admin session open while testing PAM changes.
 

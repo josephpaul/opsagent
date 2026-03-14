@@ -257,13 +257,15 @@ func buildLoginNotification() (string, error) {
 	source := firstNonEmpty(os.Getenv("PAM_RHOST"), "local")
 	service := firstNonEmpty(os.Getenv("PAM_SERVICE"), "unknown")
 	tty := firstNonEmpty(os.Getenv("PAM_TTY"), "unknown")
+	event := loginEventFromPAMType(os.Getenv("PAM_TYPE"))
 	location, format, err := loginTimeSettings()
 	if err != nil {
 		return "", err
 	}
 
 	return fmt.Sprintf(
-		"Login detected\nUser: %s\nSource: %s\nService: %s\nTTY: %s\nHost: %s\nTime: %s",
+		"Session activity detected\nEvent: %s\nUser: %s\nSource: %s\nService: %s\nTTY: %s\nHost: %s\nTime: %s",
+		event,
 		user,
 		source,
 		service,
@@ -271,6 +273,17 @@ func buildLoginNotification() (string, error) {
 		host,
 		time.Now().In(location).Format(format),
 	), nil
+}
+
+func loginEventFromPAMType(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "open_session":
+		return "Login"
+	case "close_session":
+		return "Logout"
+	default:
+		return "Session"
+	}
 }
 
 const loginDefaultTimeFormat = "2006-01-02 15:04:05 MST"
