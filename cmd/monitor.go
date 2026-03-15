@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/josephpaul/opsagent/agent"
+	"github.com/josephpaul/opsagent/internal/config"
 	"github.com/josephpaul/opsagent/internal/monitor"
 	"github.com/spf13/cobra"
 	adkagent "google.golang.org/adk/agent"
@@ -24,7 +25,35 @@ var (
 	monitorLogPath      string
 	monitorTGToken      string
 	monitorTGChatID     int64
+
+	monitorSetInterval string
+	monitorSetCPU      int
+	monitorSetRAM      int
+	monitorSetLog      string
+	monitorSetClearLog bool
 )
+
+const (
+	monitorIntervalKey = "MONITOR_INTERVAL"
+	monitorCPUKey      = "MONITOR_CPU_THRESHOLD"
+	monitorRAMKey      = "MONITOR_RAM_THRESHOLD"
+	monitorLogKey      = "MONITOR_LOG_PATH"
+)
+
+type monitorSettings struct {
+	Interval     string
+	CPUThreshold int
+	RAMThreshold int
+	LogPath      string
+}
+
+type monitorConfigured struct {
+	monitorSettings
+	HasInterval bool
+	HasCPU      bool
+	HasRAM      bool
+	HasLog      bool
+}
 
 var monitorCmd = &cobra.Command{
 	Use:   "monitor",
@@ -34,6 +63,7 @@ When usage exceeds the configured thresholds, the AI agent is automatically
 invoked to diagnose the cause.
 
   opsagent monitor run                  Run in foreground (Ctrl+C to stop)
+  opsagent monitor set                  Save default monitor settings in config.yaml
   opsagent monitor install              Install as a background service (systemd/launchd)
   opsagent monitor uninstall            Remove the background service
   opsagent monitor start                Start the installed service
@@ -51,6 +81,12 @@ var monitorInstallCmd = &cobra.Command{
 	Use:   "install",
 	Short: "Install as a background service (systemd on Linux, launchd on macOS)",
 	RunE:  runMonitorInstall,
+}
+
+var monitorSetCmd = &cobra.Command{
+	Use:   "set",
+	Short: "Save default monitor settings in config.yaml",
+	RunE:  runMonitorSet,
 }
 
 var monitorUninstallCmd = &cobra.Command{
@@ -92,7 +128,14 @@ func init() {
 	monitorInstallCmd.Flags().StringVar(&monitorTGToken, "telegram-token", "", "Telegram bot token for alert notifications")
 	monitorInstallCmd.Flags().Int64Var(&monitorTGChatID, "telegram-chat-id", 0, "Telegram chat ID for alert notifications")
 
+	monitorSetCmd.Flags().StringVar(&monitorSetInterval, "interval", "", "Save default polling interval (e.g. 30s, 5m, 1h)")
+	monitorSetCmd.Flags().IntVar(&monitorSetCPU, "cpu-threshold", 0, "Save default CPU threshold (%)")
+	monitorSetCmd.Flags().IntVar(&monitorSetRAM, "ram-threshold", 0, "Save default RAM threshold (%)")
+	monitorSetCmd.Flags().StringVar(&monitorSetLog, "log", "", "Save default log file path")
+	monitorSetCmd.Flags().BoolVar(&monitorSetClearLog, "clear-log", false, "Remove MONITOR_LOG_PATH from config")
+
 	monitorCmd.AddCommand(monitorRunCmd)
+	monitorCmd.AddCommand(monitorSetCmd)
 	monitorCmd.AddCommand(monitorInstallCmd)
 	monitorCmd.AddCommand(monitorUninstallCmd)
 	monitorCmd.AddCommand(monitorStartCmd)
@@ -102,9 +145,14 @@ func init() {
 }
 
 func runMonitor(cmd *cobra.Command, args []string) error {
-	interval, err := time.ParseDuration(monitorInterval)
+	settings, err := resolveMonitorSettings(cmd)
 	if err != nil {
-		return fmt.Errorf("invalid interval %q: %w", monitorInterval, err)
+		return err
+	}
+
+	interval, err := time.ParseDuration(settings.Interval)
+	if err != nil {
+		return fmt.Errorf("invalid interval %q: %w", settings.Interval, err)
 	}
 
 	effective := effectiveProvider(provider)
@@ -117,9 +165,9 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 
 	cfg := monitor.Config{
 		Interval:       interval,
-		CPUThreshold:   monitorCPUThreshold,
-		RAMThreshold:   monitorRAMThreshold,
-		LogPath:        monitorLogPath,
+		CPUThreshold:   settings.CPUThreshold,
+		RAMThreshold:   settings.RAMThreshold,
+		LogPath:        settings.LogPath,
 		TelegramToken:  tgToken,
 		TelegramChatID: tgChat,
 		Diagnose: func(ctx context.Context, query string) (string, error) {
@@ -131,6 +179,11 @@ func runMonitor(cmd *cobra.Command, args []string) error {
 }
 
 func runMonitorInstall(cmd *cobra.Command, args []string) error {
+	settings, err := resolveMonitorSettings(cmd)
+	if err != nil {
+		return err
+	}
+
 	binaryPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("find binary path: %w", err)
@@ -138,11 +191,64 @@ func runMonitorInstall(cmd *cobra.Command, args []string) error {
 
 	return monitor.Install(monitor.ServiceConfig{
 		BinaryPath:   binaryPath,
-		Interval:     monitorInterval,
-		CPUThreshold: monitorCPUThreshold,
-		RAMThreshold: monitorRAMThreshold,
-		LogPath:      monitorLogPath,
+		Interval:     settings.Interval,
+		CPUThreshold: settings.CPUThreshold,
+		RAMThreshold: settings.RAMThreshold,
+		LogPath:      settings.LogPath,
 	})
+}
+
+func runMonitorSet(cmd *cobra.Command, args []string) error {
+	changed := false
+
+	if cmd.Flags().Changed("interval") {
+		if _, err := time.ParseDuration(strings.TrimSpace(monitorSetInterval)); err != nil {
+			return fmt.Errorf("invalid --interval %q: %w", monitorSetInterval, err)
+		}
+		if err := config.Set(monitorIntervalKey, strings.TrimSpace(monitorSetInterval)); err != nil {
+			return fmt.Errorf("save %s: %w", monitorIntervalKey, err)
+		}
+		changed = true
+	}
+	if cmd.Flags().Changed("cpu-threshold") {
+		if monitorSetCPU <= 0 {
+			return fmt.Errorf("--cpu-threshold must be > 0")
+		}
+		if err := config.Set(monitorCPUKey, strconv.Itoa(monitorSetCPU)); err != nil {
+			return fmt.Errorf("save %s: %w", monitorCPUKey, err)
+		}
+		changed = true
+	}
+	if cmd.Flags().Changed("ram-threshold") {
+		if monitorSetRAM <= 0 {
+			return fmt.Errorf("--ram-threshold must be > 0")
+		}
+		if err := config.Set(monitorRAMKey, strconv.Itoa(monitorSetRAM)); err != nil {
+			return fmt.Errorf("save %s: %w", monitorRAMKey, err)
+		}
+		changed = true
+	}
+	if cmd.Flags().Changed("log") {
+		if err := config.Set(monitorLogKey, strings.TrimSpace(monitorSetLog)); err != nil {
+			return fmt.Errorf("save %s: %w", monitorLogKey, err)
+		}
+		changed = true
+	}
+	if monitorSetClearLog {
+		if err := config.Delete(monitorLogKey); err != nil {
+			return fmt.Errorf("remove %s: %w", monitorLogKey, err)
+		}
+		changed = true
+	}
+
+	if !changed {
+		return fmt.Errorf("no settings provided. Use one or more flags (e.g. --interval 30s --cpu-threshold 85)")
+	}
+
+	path, _ := config.FilePath()
+	fmt.Printf("Saved monitor defaults in %s\n", path)
+	fmt.Println("Use 'opsagent monitor install' to apply defaults to the background service.")
+	return nil
 }
 
 func runMonitorUninstall(cmd *cobra.Command, args []string) error {
@@ -158,6 +264,8 @@ func runMonitorStop(cmd *cobra.Command, args []string) error {
 }
 
 func runMonitorStatus(cmd *cobra.Command, args []string) error {
+	configured, cfgErr := loadMonitorConfigured()
+
 	info, err := monitor.Status()
 	if err != nil {
 		return err
@@ -165,12 +273,26 @@ func runMonitorStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("OpsAgent Monitor Status")
 	fmt.Println("───────────────────────")
+	if cfgErr != nil {
+		fmt.Printf("  Config defaults: invalid (%v)\n", cfgErr)
+	} else {
+		fmt.Printf("  Config defaults:\n")
+		fmt.Printf("    Interval:       %s\n", configured.Interval)
+		fmt.Printf("    CPU threshold:  %d%%\n", configured.CPUThreshold)
+		fmt.Printf("    RAM threshold:  %d%%\n", configured.RAMThreshold)
+		if configured.LogPath != "" {
+			fmt.Printf("    Log file:       %s\n", configured.LogPath)
+		} else {
+			fmt.Printf("    Log file:       (none)\n")
+		}
+	}
+	fmt.Println()
 
 	if !info.Installed {
 		fmt.Printf("  Installed:  no\n")
 		fmt.Printf("  Service:    %s (not found)\n", info.ServiceFile)
 		fmt.Println()
-		fmt.Println("  Run 'opsagent monitor install' to set up background monitoring.")
+		fmt.Println("  Run 'opsagent monitor install' to set up background monitoring from current defaults.")
 		return nil
 	}
 
@@ -198,6 +320,97 @@ func runMonitorStatus(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 	return nil
+}
+
+func resolveMonitorSettings(cmd *cobra.Command) (monitorSettings, error) {
+	settings := monitorSettings{
+		Interval:     "60s",
+		CPUThreshold: 90,
+		RAMThreshold: 85,
+		LogPath:      "",
+	}
+	configured, err := loadMonitorConfigured()
+	if err != nil {
+		return settings, err
+	}
+	if configured.HasInterval {
+		settings.Interval = configured.Interval
+	}
+	if configured.HasCPU {
+		settings.CPUThreshold = configured.CPUThreshold
+	}
+	if configured.HasRAM {
+		settings.RAMThreshold = configured.RAMThreshold
+	}
+	if configured.HasLog {
+		settings.LogPath = configured.LogPath
+	}
+
+	if cmd.Flags().Changed("interval") {
+		settings.Interval = monitorInterval
+	}
+	if cmd.Flags().Changed("cpu-threshold") {
+		settings.CPUThreshold = monitorCPUThreshold
+	}
+	if cmd.Flags().Changed("ram-threshold") {
+		settings.RAMThreshold = monitorRAMThreshold
+	}
+	if cmd.Flags().Changed("log") {
+		settings.LogPath = monitorLogPath
+	}
+	return settings, nil
+}
+
+func loadMonitorConfigured() (monitorConfigured, error) {
+	out := monitorConfigured{
+		monitorSettings: monitorSettings{
+			Interval:     "60s",
+			CPUThreshold: 90,
+			RAMThreshold: 85,
+			LogPath:      "",
+		},
+	}
+
+	pairs, err := config.Read()
+	if err != nil {
+		return out, err
+	}
+	valueFor := func(key string) string {
+		val := strings.TrimSpace(pairs[key])
+		if val == "" {
+			val = strings.TrimSpace(os.Getenv(key))
+		}
+		return val
+	}
+
+	if val := valueFor(monitorIntervalKey); val != "" {
+		if _, err := time.ParseDuration(val); err != nil {
+			return out, fmt.Errorf("%s: %w", monitorIntervalKey, err)
+		}
+		out.Interval = val
+		out.HasInterval = true
+	}
+	if val := valueFor(monitorCPUKey); val != "" {
+		n, err := strconv.Atoi(val)
+		if err != nil || n <= 0 {
+			return out, fmt.Errorf("%s must be a positive integer", monitorCPUKey)
+		}
+		out.CPUThreshold = n
+		out.HasCPU = true
+	}
+	if val := valueFor(monitorRAMKey); val != "" {
+		n, err := strconv.Atoi(val)
+		if err != nil || n <= 0 {
+			return out, fmt.Errorf("%s must be a positive integer", monitorRAMKey)
+		}
+		out.RAMThreshold = n
+		out.HasRAM = true
+	}
+	if val := valueFor(monitorLogKey); val != "" {
+		out.LogPath = val
+		out.HasLog = true
+	}
+	return out, nil
 }
 
 func resolveMonitorTelegram() (string, int64) {

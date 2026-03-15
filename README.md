@@ -165,6 +165,10 @@ opsagent config unset KEY     # Remove a saved key
 | `LOGIN_NOTIFY_HOSTNAME_LABEL` | Optional hostname override shown in login alerts |
 | `LOGIN_NOTIFY_TIMEZONE` | Optional IANA timezone for login alert timestamps (for example `Asia/Kolkata`) |
 | `LOGIN_NOTIFY_TIME_FORMAT` | Optional Go `time.Format` layout for login alert timestamps |
+| `MONITOR_INTERVAL` | Default monitor interval for `monitor run` / `monitor install` |
+| `MONITOR_CPU_THRESHOLD` | Default monitor CPU threshold (%) for `monitor run` / `monitor install` |
+| `MONITOR_RAM_THRESHOLD` | Default monitor RAM threshold (%) for `monitor run` / `monitor install` |
+| `MONITOR_LOG_PATH` | Default monitor log path for `monitor run` / `monitor install` |
 
 All of these can be set from the CLI, so you never need a `.env` file.
 
@@ -228,11 +232,28 @@ This creates a **systemd** user service on Linux or a **launchd** agent on macOS
 ### Manage the service
 
 ```bash
+opsagent monitor set --interval 30s --cpu-threshold 85 --ram-threshold 80
 opsagent monitor status      # Check if running
 opsagent monitor stop        # Stop the service
 opsagent monitor start       # Start the service
 opsagent monitor uninstall   # Remove the service entirely
 ```
+
+### Save default monitor settings in config
+
+You can persist monitor defaults in `config.yaml` so future `monitor run` and
+`monitor install` commands use them automatically when flags are omitted.
+
+```bash
+opsagent monitor set --interval 30s --cpu-threshold 85 --ram-threshold 80
+opsagent monitor set --log /var/log/opsagent/monitor.log
+opsagent monitor set --clear-log
+```
+
+Precedence for `monitor run` and `monitor install`:
+1. Explicit CLI flags
+2. Monitor defaults from config (`MONITOR_*`)
+3. Built-in defaults (`60s`, `90`, `85`)
 
 ### Monitor flags
 

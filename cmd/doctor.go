@@ -204,6 +204,18 @@ func doctorTelegram() {
 func doctorMonitor() {
 	fmt.Println(bold("  Monitor"))
 
+	configured, cfgErr := loadMonitorConfigured()
+	if cfgErr != nil {
+		fail("Configured defaults:", cfgErr.Error())
+	} else {
+		info("Configured Interval:", configured.Interval)
+		info("Configured CPU Threshold:", fmt.Sprintf("%d%%", configured.CPUThreshold))
+		info("Configured RAM Threshold:", fmt.Sprintf("%d%%", configured.RAMThreshold))
+		if configured.LogPath != "" {
+			info("Configured Log:", configured.LogPath)
+		}
+	}
+
 	monInfo, err := monitor.Status()
 	if err != nil {
 		warn("Service:", "cannot check: "+err.Error())
